@@ -375,7 +375,7 @@ def validate(model, val_dataloader):
         # Batch counters
         num_examples += pred_action.size(0)
         num_batches += 1
-        break
+        # break
 
     # Compute final averages
     num_batches = max(num_batches, 1)
