@@ -1,0 +1,151 @@
+SEED: 2024
+output_dir: data/experiments/peract/3dlotus/v1
+tfboard_log_dir: data/TFBoard
+checkpoint: null
+checkpoint_strict_load: False
+world_size: 1
+
+wandb_enable: False
+wandb_name: pt3-diff
+
+TRAIN:
+  resume_training: True
+  resume_encoder_only: False
+  freeze_params:
+    encoder: False
+    decoder: False
+  train_batch_size: 4
+  val_batch_size: 4
+  gradient_accumulation_steps: 1
+  num_epochs: null
+  num_train_steps: 300000
+  warmup_steps: 5000
+  log_steps: 4
+  save_steps: 10000
+  val_steps: 2
+  optim: 'adamw'
+  learning_rate: 1e-4
+  lr_sched: 'cosine'
+  num_cosine_cycles: null
+  betas: [0.9, 0.98]
+  weight_decay: 0.05
+  grad_norm: 10
+  n_workers: 4
+  pin_mem: True
+
+TRAIN_DATASET:
+  data_dir: ${oc.env:HOME}/data/train/keysteps_bbox_pcd/voxel1cm
+  instr_embed_file: ${oc.env:HOME}/data/train/keysteps_bbox_pcd/instr_embeds_clip.npy
+  taskvar_instr_file: ../../../assets/taskvars_instructions_peract.json
+  taskvar_file: ../../../assets/taskvars_peract.json
+  num_points: 4096
+  xyz_shift: center
+  xyz_norm: False
+  use_height: True
+  sample_points_by_distance: False
+  rot_type: euler_disc
+  pos_type: disc
+  instr_embed_type: all
+  all_step_in_batch: True
+  include_last_step: False
+  rm_table: True
+  rm_robot: box_keep_gripper
+  augment_pc: True
+  aug_max_rot: 45
+  same_npoints_per_example: False
+  rm_pc_outliers: False
+  rm_pc_outliers_neighbors: 25
+  pos_bins: 15
+  pos_bin_size: 0.01
+  pos_heatmap_type: dist
+  pos_heatmap_no_robot: True
+  real_robot: False
+
+VAL_DATASET:
+  use_val: True
+  data_dir: ${oc.env:HOME}/data/train/keysteps_bbox_pcd/voxel1cm
+  instr_embed_file: ${oc.env:HOME}/data/train/keysteps_bbox_pcd/instr_embeds_clip.npy
+  taskvar_instr_file: ../../../assets/taskvars_instructions_peract.json
+  taskvar_file: ../../../assets/taskvars_peract.json
+  num_points: 4096
+  xyz_shift: center
+  xyz_norm: False
+  use_height: True
+  sample_points_by_distance: False
+  rot_type: euler_disc
+  pos_type: disc
+  instr_embed_type: all
+  all_step_in_batch: True
+  include_last_step: False
+  rm_table: True
+  rm_robot: box_keep_gripper
+  augment_pc: False
+  aug_max_rot: 0
+  same_npoints_per_example: False
+  rm_pc_outliers: False
+  rm_pc_outliers_neighbors: 25
+  pos_bins: 15
+  pos_bin_size: 0.01
+  pos_heatmap_type: dist
+  pos_heatmap_no_robot: True
+  real_robot: False
+  
+MODEL:
+  model_class: SimplePolicyPTV3CA
+  ptv3_config:
+    in_channels: 7
+    order: ["z", "z-trans", "hilbert", "hilbert-trans"]
+    stride: [2, 2, 2, 2]
+    enc_depths: [1, 1, 1, 1, 1]
+    enc_channels: [64, 128, 256, 512, 768]
+    enc_num_head: [2, 4, 8, 16, 32]
+    enc_patch_size: [128, 128, 128, 128, 128]
+    dec_depths: [1, 1, 1, 1]
+    dec_channels: [128, 128, 256, 512]
+    dec_num_head: [4, 4, 8, 16]
+    dec_patch_size: [128, 128, 128, 128]
+    mlp_ratio: 4
+    qkv_bias: True
+    qk_scale: null
+    qk_norm: True
+    scaled_cosine_attn: False
+    attn_drop: 0.1
+    proj_drop: 0.1
+    drop_path: 0.0
+    pre_norm: True
+    shuffle_orders: True
+    enable_rpe: False
+    enable_flash: True
+    upcast_attention: False
+    upcast_softmax: False
+    cls_mode: False
+    pdnorm_bn: False
+    pdnorm_ln: False
+    pdnorm_decouple: False
+    pdnorm_adaptive: False
+    pdnorm_affine: True
+    pdnorm_conditions: null
+    pdnorm_only_decoder: False
+    add_coords_in_attn: 'none'
+  
+  action_config:
+    voxel_size: 0.01
+    context_channels: 256
+    txt_ft_size: 512
+    max_txt_len: 77
+    txt_reduce: attn
+    use_ee_pose: False
+    use_step_id: False
+    max_steps: 30
+    reduce: max
+    max_traj_len: 1
+    dim_actions: 7
+    pos_pred_type: heatmap_disc
+    pos_heatmap_temp: 0.1
+    rot_pred_type: euler_disc
+    dropout: 0.2
+    pos_bins: 15
+    pos_bin_size: 0.01
+  loss_config:
+    pos_weight: 1
+    rot_weight: 1

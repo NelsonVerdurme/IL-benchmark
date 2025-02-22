@@ -7,6 +7,7 @@ saving utilities
 import json
 import os
 import torch
+from omegaconf import OmegaConf
 
 
 def save_training_meta(args):
@@ -14,7 +15,7 @@ def save_training_meta(args):
     os.makedirs(os.path.join(args.output_dir, 'ckpts'), exist_ok=True)
 
     with open(os.path.join(args.output_dir, 'logs', 'training_config.yaml'), 'w') as writer:
-        args_str = args.dump()
+        args_str = OmegaConf.to_yaml(args)
         print(args_str, file=writer)
 
 class ModelSaver(object):

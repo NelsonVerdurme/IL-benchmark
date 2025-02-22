@@ -228,6 +228,9 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
             txt_embeds: (batch, txt_dim)
         '''
         batch = self.prepare_batch(batch)
+
+        # print("points shape", batch['pc_fts'].shape)
+
         device = batch['pc_fts'].device
 
         ptv3_batch = self.prepare_ptv3_batch(batch)
@@ -248,6 +251,7 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
             # TODO
             # if not compute_loss:
             if kwargs.get('compute_final_action', True):
+                # compute the real one as default behavior
                 # import time
                 # st = time.time()
                 cont_pred_pos = []
@@ -273,7 +277,9 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
                 cont_pred_pos = torch.from_numpy(np.array(cont_pred_pos)).float().to(device)
                 # print('time', time.time() - st)
                 pred_pos = cont_pred_pos
+                # print("using real predicted pos")
             else:
+                # print('Warning: compute_final_action is False, but pos_pred_type is heatmap_disc using GT as place holder',)
                 pred_pos = batch['gt_actions'][..., :3]
 
         if self.config.action_config.rot_pred_type == 'rot6d':

@@ -49,12 +49,16 @@ class SimplePolicyDataset(Dataset):
         assert rot_type in ['quat', 'rot6d', 'euler', 'euler_delta', 'euler_disc']
         assert rm_robot in ['none', 'gt', 'box', 'box_keep_gripper']
 
+        # join script folder
+        taskvar_instr_file = os.path.join(os.path.dirname(__file__), taskvar_instr_file)
         self.taskvar_instrs = json.load(open(taskvar_instr_file))
         self.instr_embeds = np.load(instr_embed_file, allow_pickle=True).item()
         if instr_embed_type == 'last':
             self.instr_embeds = {instr: embeds[-1:] for instr, embeds in self.instr_embeds.items()}
             
         if taskvar_file is not None:
+            # join script folder
+            taskvar_file = os.path.join(os.path.dirname(__file__), taskvar_file)
             self.taskvars = json.load(open(taskvar_file))
         else:
             self.taskvars = os.listdir(data_dir)
@@ -293,6 +297,10 @@ class SimplePolicyDataset(Dataset):
                     max_npoints = int(len(xyz) * np.random.uniform(0.95, 1))
                     point_idxs = np.random.permutation(len(xyz))[:max_npoints]
 
+            # print out the number of points in the point cloud now
+            # print("origin nums", len(xyz))
+            # print("selected nums", len(point_idxs))
+
             xyz = xyz[point_idxs]
             rgb = rgb[point_idxs]
             height = xyz[:, -1] - self.TABLE_HEIGHT
@@ -356,6 +364,8 @@ class SimplePolicyDataset(Dataset):
             outs['ee_poses'].append(torch.from_numpy(ee_pose).float())
             outs['gt_actions'].append(torch.from_numpy(gt_action).float())
             outs['step_ids'].append(t)
+        
+        # print(outs['data_ids'])
 
         return outs
     

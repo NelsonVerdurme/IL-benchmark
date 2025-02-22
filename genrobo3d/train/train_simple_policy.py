@@ -4,6 +4,7 @@ import json
 import argparse
 import time
 from collections import defaultdict
+import uuid
 from tqdm import tqdm
 import copy
 from functools import partial
@@ -36,6 +37,11 @@ from genrobo3d.models.simple_policy_ptv3 import (
     SimplePolicyPTV3AdaNorm, SimplePolicyPTV3CA, SimplePolicyPTV3Concat
 )
 
+import wandb
+# Import hydra and omegaconf for Hydra-based config loading
+import hydra
+from omegaconf import DictConfig, OmegaConf
+
 
 DATASET_FACTORY = {
     'SimplePolicyPTV3AdaNorm': (SimplePolicyDataset, ptv3_collate_fn),
@@ -51,7 +57,8 @@ MODEL_FACTORY = {
 
 
 def main(config):
-    config.defrost()
+    OmegaConf.set_readonly(config, False)
+    OmegaConf.set_struct(config, False)
     default_gpu, n_gpu, device = set_cuda(config)
 
     if default_gpu:
@@ -116,6 +123,9 @@ def main(config):
     if config.world_size > 1:
         model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
+    if config.wandb_enable:
+        wandb_dict = {}
+
     # Fix parameters
     if config.TRAIN.freeze_params.encoder:
         for param_name, param in model.named_parameters():
@@ -125,7 +135,7 @@ def main(config):
     LOGGER.info("Model: nweights %d nparams %d" % (model.num_parameters))
     LOGGER.info("Model: trainable nweights %d nparams %d" % (model.num_trainable_parameters))
     
-    config.freeze()
+    OmegaConf.set_readonly(config, True)
 
     # Load from checkpoint
     model_checkpoint_file = config.checkpoint
@@ -197,7 +207,6 @@ def main(config):
 
     running_metrics = {}
 
-    best_val_step, best_val_metric = None, np.inf
     
     for epoch_id in range(restart_epoch, config.TRAIN.num_epochs):
         if global_step >= config.TRAIN.num_train_steps:
@@ -216,6 +225,8 @@ def main(config):
             losses['total'].backward()
 
             for key, value in losses.items():
+                if config.wandb_enable:
+                    wandb_dict.update({f'train_loss_{key}': value.item()})
                 TB_LOGGER.add_scalar(f'step/loss_{key}', value.item(), global_step)
                 running_metrics.setdefault(f'loss_{key}', RunningMeter(f'loss_{key}'))
                 running_metrics[f'loss_{key}'](value.item())
@@ -228,6 +239,8 @@ def main(config):
                 for kp, param_group in enumerate(optimizer.param_groups):
                     param_group['lr'] = lr_this_step = max(init_lrs[kp] * lr_decay_rate, 1e-8)
                 TB_LOGGER.add_scalar('lr', lr_this_step, global_step)
+                if config.wandb_enable:
+                    wandb_dict.update({'lr': lr_this_step, 'global_step': global_step})
 
                 # log loss
                 # NOTE: not gathered across GPUs for efficiency
@@ -239,6 +252,8 @@ def main(config):
                         model.parameters(), config.TRAIN.grad_norm
                     )
                     TB_LOGGER.add_scalar('grad_norm', grad_norm, global_step)
+                    if config.wandb_enable:
+                        wandb_dict.update({'grad_norm': grad_norm})
                 optimizer.step()
                 optimizer.zero_grad()
                 pbar.update(1)
@@ -248,7 +263,9 @@ def main(config):
                 LOGGER.info(
                     f'==============Epoch {epoch_id} Step {global_step}===============')
                 LOGGER.info(', '.join(['%s:%.4f' % (lk, lv.val) for lk, lv in running_metrics.items()]))
-                LOGGER.info('===============================================')                
+                LOGGER.info('===============================================')
+                if config.wandb_enable:
+                    wandb.log(wandb_dict)             
 
             if global_step % config.TRAIN.save_steps == 0:
                 model_saver.save(model, global_step, optimizer=optimizer, rewrite_optimizer=True)
@@ -258,10 +275,9 @@ def main(config):
                 LOGGER.info(f'=================Validation=================')
                 metric_str = ', '.join(['%s: %.4f' % (lk, lv) for lk, lv in val_metrics.items()])
                 LOGGER.info(metric_str)
+                if config.wandb_enable:
+                    wandb.log(val_metrics)
                 LOGGER.info('===============================================')
-                if val_metrics['pos_loss'] < best_val_metric:
-                    best_val_metric = val_metrics['pos_loss']
-                    best_val_step = global_step
                 model.train()
 
             if global_step >= config.TRAIN.num_train_steps:
@@ -279,44 +295,115 @@ def main(config):
         metric_str = ', '.join(['%s: %.4f' % (lk, lv) for lk, lv in val_metrics.items()])
         LOGGER.info(metric_str)
         LOGGER.info('===============================================')
-        if val_metrics['pos_loss'] < best_val_metric:
-            best_val_metric = val_metrics['pos_loss']
-            best_val_step = global_step
 
-    LOGGER.info(
-        f'Validation: Best loss: {best_val_metric:.4f} at step {best_val_step}'
-    )
+
 
 @torch.no_grad()
 def validate(model, val_dataloader):
     model.eval()
     pos_loss, rot_loss, open_loss, total_loss, num_examples, num_batches = 0, 0, 0, 0, 0, 0
-    pos_l1_loss, open_acc = 0, 0
+
+    total_open_acc = 0
+    total_pos_l2_err, total_quat_l1_err = 0, 0
+
+    # Per-task metric storage
+    per_task_metrics = {}
+
+    num_examples, num_batches = 0, 0
+
     for batch in val_dataloader:
         pred_action, loss = model(batch, compute_loss=True)
         pred_action = pred_action.cpu()
+
+        # Open accuracy
         pred_open = torch.sigmoid(pred_action[..., -1]) > 0.5
-        open_acc += (pred_open == batch['gt_actions'][..., -1].cpu()).float().sum().item()
-        pos_l1_loss += F.l1_loss(pred_action[..., :3], batch['gt_actions'][..., :3].cpu())
-        if 'layer_11' in loss:
-            pos_loss += loss['layer_11_pos'].item()
-            total_loss += loss['layer_11'].item() 
+        batch_open_acc = (pred_open == batch["gt_actions"][..., -1].cpu()).float()
+        total_open_acc += batch_open_acc.sum().item()
+
+        # Position and quaternion errors
+        pos_l2 = ((pred_action[..., :3] - batch["gt_actions"][..., :3].cpu()) ** 2).sum(-1).sqrt()
+        quat_l1 = (pred_action[..., 3:7] - batch["gt_actions"][..., 3:7].cpu()).abs().sum(-1)
+        quat_l1_ = (pred_action[..., 3:7] + batch["gt_actions"][..., 3:7].cpu()).abs().sum(-1)
+        quat_l1 = torch.min(quat_l1, quat_l1_)
+
+        # Compute threshold-based errors, float for averaging, actually 1 or 0
+        pos_acc_0_01 = (pos_l2 < 0.01).float()
+        rot_acc_0_025 = (quat_l1 < 0.025).float()
+        rot_acc_0_05 = (quat_l1 < 0.05).float()
+
+        # Accumulate total errors
+        total_pos_l2_err += pos_l2.sum().item()
+        total_quat_l1_err += quat_l1.sum().item()
+
+        # Loss Accumulation
+        if "layer_11" in loss:
+            pos_loss += loss["layer_11_pos"].item()
+            total_loss += loss["layer_11"].item()
         else:
-            pos_loss += loss['pos'].item()
-            rot_loss += loss['rot'].item()
-            open_loss += loss['open'].item()
-            total_loss += loss['total'].item() 
+            pos_loss += loss["pos"].item()
+            rot_loss += loss["rot"].item()
+            open_loss += loss["open"].item()
+            total_loss += loss["total"].item()
+
+        # Extract task names
+        tasks = batch["data_ids"]  # Example: ["stack_blocks_peract+11-episode62-t0", ...]
+        task_names = [task.split("+")[0] for task in tasks]  # Extract task name before "+"
+
+        # Compute Per-Task Metrics
+        for task_name in np.unique(task_names):
+            task_mask = np.array(task_names) == task_name
+
+            if task_name not in per_task_metrics:
+                per_task_metrics[task_name] = {
+                    "pos_l1_err": [],
+                    "pos_l2_err": [],
+                    "quat_l1_err": [],
+                    "pos_acc_0.01": [],
+                    "rot_acc_0.025": [],
+                    "rot_acc_0.05": [],
+                    "open_acc": [],
+                }
+
+            # Store per-task errors and accuracy
+            per_task_metrics[task_name]["pos_l2_err"].append(pos_l2[task_mask].mean().item())
+            per_task_metrics[task_name]["quat_l1_err"].append(quat_l1[task_mask].mean().item())
+            per_task_metrics[task_name]["pos_acc_0.01"].append(pos_acc_0_01[task_mask].mean().item())
+            per_task_metrics[task_name]["rot_acc_0.025"].append(rot_acc_0_025[task_mask].mean().item())
+            per_task_metrics[task_name]["rot_acc_0.05"].append(rot_acc_0_05[task_mask].mean().item())
+            per_task_metrics[task_name]["open_acc"].append(batch_open_acc[task_mask].mean().item())
+
+        # Batch counters
         num_examples += pred_action.size(0)
         num_batches += 1
-        
-    return {
-        'total_loss': total_loss / num_batches, 
-        'pos_loss': pos_loss / num_batches,
-        'pos_l1_loss': pos_l1_loss / num_batches,
-        'rot_loss': rot_loss / num_batches,
-        'open_loss': open_loss / num_batches,
-        'open_acc': open_acc / num_examples, 
+        break
+
+    # Compute final averages
+    num_batches = max(num_batches, 1)
+    num_examples = max(num_examples, 1)
+
+    metrics = {
+        # Total losses
+        "total/loss": total_loss / num_batches,
+        "total/pos_loss": pos_loss / num_batches,
+        "total/rot_loss": rot_loss / num_batches,
+        "total/open_loss": open_loss / num_batches,
+
+        # Total errors (mean per example)
+        "total/pos_l2_err": total_pos_l2_err / num_examples,
+        "total/quat_l1_err": total_quat_l1_err / num_examples,
+
+        # Total accuracy
+        "total/open_acc": total_open_acc / num_examples,
     }
+
+    # Store per-task metrics
+    for task_name, task_data in per_task_metrics.items():
+        for metric_name, values in task_data.items():
+            metrics[f"per_task/{task_name}_{metric_name}"] = np.mean(values)
+
+    return metrics
+
+
 
 
 def build_args():
@@ -347,6 +434,20 @@ def build_args():
     return config
 
 
+# Remove the build_args function and use Hydra for config loading.
+@hydra.main(config_path="./", config_name="modified_ptv3")
+def hydra_main(config: DictConfig):
+    if config.wandb_enable:
+        # gerenate a id including date and time
+        time_id = f"{config.MODEL.model_class}_{time.strftime('%m%d-%H')}"
+        # gnerate a UUID incase of same time_id
+        wandb.init(project='pt3-diff', name=config.wandb_name + f"{time_id}_{str(uuid.uuid4())[:8]}", config=OmegaConf.to_container(config, resolve=True))
+        main(config)
+        wandb.finish()
+
+    else:
+        print(OmegaConf.to_container(config, resolve=True))
+        main(config)
+
 if __name__ == '__main__':
-    config = build_args()
-    main(config)
+    hydra_main()

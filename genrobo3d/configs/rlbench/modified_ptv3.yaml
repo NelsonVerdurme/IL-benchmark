@@ -63,7 +63,7 @@ TRAIN_DATASET:
   real_robot: False
 
 VAL_DATASET:
-  use_val: True
+  use_val: False
   data_dir: '/data/val/keysteps_bbox_pcd/voxel1cm'
   instr_embed_file: '/data/val/keysteps_bbox_pcd/instr_embeds_clip.npy'
   taskvar_instr_file: 'assets/taskvars_instructions_new.json'
