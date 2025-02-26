@@ -315,6 +315,12 @@ def validate(model, val_dataloader):
         pred_action, loss = model(batch, compute_loss=True)
         pred_action = pred_action.cpu()
 
+        # print(pred_action.shape) # dim = 8
+        # print(batch["gt_quaternion"].shape) # dim = 7
+
+        # print(pred_action[..., 3:7])
+        # print(batch["gt_quaternion"])
+
         # Open accuracy
         pred_open = torch.sigmoid(pred_action[..., -1]) > 0.5
         batch_open_acc = (pred_open == batch["gt_actions"][..., -1].cpu()).float()
@@ -322,8 +328,8 @@ def validate(model, val_dataloader):
 
         # Position and quaternion errors
         pos_l2 = ((pred_action[..., :3] - batch["gt_actions"][..., :3].cpu()) ** 2).sum(-1).sqrt()
-        quat_l1 = (pred_action[..., 3:7] - batch["gt_actions"][..., 3:7].cpu()).abs().sum(-1)
-        quat_l1_ = (pred_action[..., 3:7] + batch["gt_actions"][..., 3:7].cpu()).abs().sum(-1)
+        quat_l1 = (pred_action[..., 3:7] - batch["gt_quaternion"][..., :].cpu()).abs().sum(-1)
+        quat_l1_ = (pred_action[..., 3:7] + batch["gt_quaternion"][..., :].cpu()).abs().sum(-1)
         quat_l1 = torch.min(quat_l1, quat_l1_)
 
         # Compute threshold-based errors, float for averaging, actually 1 or 0
@@ -375,7 +381,7 @@ def validate(model, val_dataloader):
         # Batch counters
         num_examples += pred_action.size(0)
         num_batches += 1
-        # break
+        break
 
     # Compute final averages
     num_batches = max(num_batches, 1)

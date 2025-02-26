@@ -219,12 +219,13 @@ class SimplePolicyDataset(Dataset):
         outs = {
             'data_ids': [], 'pc_fts': [], 'step_ids': [],
             'pc_centroids': [], 'pc_radius': [], 'ee_poses': [], 
-            'txt_embeds': [], 'gt_actions': [],
+            'txt_embeds': [], 'gt_actions': [], 'gt_quaternion': []
         }
         if self.pos_type == 'disc':
             outs['disc_pos_probs'] = []
 
-        gt_rots = self.get_groundtruth_rotations(data['action'][:, 3:7])
+        gt_rots = self.get_groundtruth_rotations(data['action'][:, 3:7]) 
+        # those are gt used for supervision, depending on the rot_type
 
         num_steps = len(data['xyz'])
         for t in range(num_steps):
@@ -363,6 +364,7 @@ class SimplePolicyDataset(Dataset):
             outs['txt_embeds'].append(torch.from_numpy(instr_embed).float())
             outs['ee_poses'].append(torch.from_numpy(ee_pose).float())
             outs['gt_actions'].append(torch.from_numpy(gt_action).float())
+            outs['gt_quaternion'].append(torch.from_numpy(data['action'][:, 3:7][t]).float())
             outs['step_ids'].append(t)
         
         # print(outs['data_ids'])
@@ -405,7 +407,7 @@ def ptv3_collate_fn(data):
     batch['offset'] = torch.cumsum(torch.LongTensor(npoints_in_batch), dim=0)
     batch['pc_fts'] = torch.cat(batch['pc_fts'], 0) # (#all points, 6)
 
-    for key in ['ee_poses', 'gt_actions']:   
+    for key in ['ee_poses', 'gt_actions', 'gt_quaternion']:   
         batch[key] = torch.stack(batch[key], 0)
 
     # if 'disc_pos_probs' in batch:
