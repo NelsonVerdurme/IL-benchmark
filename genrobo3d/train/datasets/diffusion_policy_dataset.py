@@ -403,6 +403,7 @@ def ptv3_collate_fn(data):
     batch = {}
     for key in data[0].keys():
         batch[key] = sum([x[key] for x in data], [])
+        # concate different lists of tensors into one list of tensors
     
     npoints_in_batch = [x.size(0) for x in batch['pc_fts']]
     batch['npoints_in_batch'] = npoints_in_batch
@@ -412,6 +413,8 @@ def ptv3_collate_fn(data):
 
     for key in ['ee_poses', 'gt_actions', 'gt_quaternion']:   
         batch[key] = torch.stack(batch[key], 0)
+        # print(key)
+        # print(batch[key].shape)
 
     # if 'disc_pos_probs' in batch:
     #     batch['disc_pos_probs'] = batch['disc_pos_probs'] # [(3, #all pointspos_bins*2)]
