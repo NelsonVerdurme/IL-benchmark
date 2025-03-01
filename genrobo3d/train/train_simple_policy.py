@@ -85,11 +85,15 @@ def main(config):
         val_dataset = dataset_class(**config.VAL_DATASET)
         LOGGER.info(f"#num_val: {len(val_dataset)}")
         val_dataloader = torch.utils.data.DataLoader(
-            val_dataset, batch_size=config.TRAIN.val_batch_size, shuffle=False,
+            val_dataset, batch_size=config.TRAIN.val_batch_size, shuffle=True,
             num_workers=config.TRAIN.n_workers, pin_memory=True, collate_fn=dataset_collate_fn
         )
     else:
         val_dataloader = None
+
+    
+    num_batches_per_step = 5  # Number of batches to process per validation step
+    val_loader = iter(val_dataloader)  # Initial iterator
 
     LOGGER.info(f'#num_steps_per_epoch: {len(trn_dataloader)}')
     if config.TRAIN.num_train_steps is None:
@@ -256,7 +260,8 @@ def main(config):
                         wandb_dict.update({'grad_norm': grad_norm})
                 optimizer.step()
                 optimizer.zero_grad()
-                pbar.update(1)
+                if step % config.TRAIN.bar_steps == 0:
+                    pbar.update(config.TRAIN.bar_steps)
 
             if global_step % config.TRAIN.log_steps == 0:
                 # monitor training throughput
@@ -271,7 +276,7 @@ def main(config):
                 model_saver.save(model, global_step, optimizer=optimizer, rewrite_optimizer=True)
 
             if (val_dataloader is not None) and (global_step % config.TRAIN.val_steps == 0):
-                val_metrics = validate(model, val_dataloader)
+                val_metrics = validate(model, val_loader, config.TRAIN.val_batches)
                 LOGGER.info(f'=================Validation=================')
                 metric_str = ', '.join(['%s: %.4f' % (lk, lv) for lk, lv in val_metrics.items()])
                 LOGGER.info(metric_str)
@@ -299,7 +304,7 @@ def main(config):
 
 
 @torch.no_grad()
-def validate(model, val_dataloader):
+def validate(model, val_loader, num_batches_per_step=5):
     model.eval()
     pos_loss, rot_loss, open_loss, total_loss, num_examples, num_batches = 0, 0, 0, 0, 0, 0
 
@@ -311,7 +316,15 @@ def validate(model, val_dataloader):
 
     num_examples, num_batches = 0, 0
 
-    for batch in val_dataloader:
+    for _ in range(num_batches_per_step):
+        try:
+            batch = next(val_loader)  # Get next batch
+        except StopIteration:
+            # Dataset is exhausted; restart the dataloader with reshuffling
+            print("Validation dataset finished, reshuffling...")
+            val_loader = iter(val_dataloader)  # Reset iterator to reshuffle
+            batch = next(val_loader)  # Get first batch of new epoch
+
         pred_action, loss = model(batch, compute_loss=True)
         pred_action = pred_action.cpu()
 
