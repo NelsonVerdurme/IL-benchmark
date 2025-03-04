@@ -16,7 +16,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
+from torch.utils.data import DataLoader, RandomSampler
+
 import numpy as np
+
 
 from genrobo3d.train.utils.logger import LOGGER, TB_LOGGER, RunningMeter, add_log_to_file
 from genrobo3d.train.utils.save import ModelSaver, save_training_meta
@@ -85,14 +88,13 @@ def main(config):
         val_dataset = dataset_class(**config.VAL_DATASET)
         LOGGER.info(f"#num_val: {len(val_dataset)}")
         val_dataloader = torch.utils.data.DataLoader(
-            val_dataset, batch_size=config.TRAIN.val_batch_size, shuffle=True,
-            num_workers=config.TRAIN.n_workers, pin_memory=True, collate_fn=dataset_collate_fn
+            val_dataset, batch_size=config.TRAIN.val_batch_size,
+            num_workers=config.TRAIN.n_workers, pin_memory=True, collate_fn=dataset_collate_fn, sampler=RandomSampler(val_dataset, replacement=True)
         )
     else:
         val_dataloader = None
 
     
-    num_batches_per_step = 5  # Number of batches to process per validation step
     val_loader = iter(val_dataloader)  # Initial iterator
 
     LOGGER.info(f'#num_steps_per_epoch: {len(trn_dataloader)}')
@@ -295,7 +297,7 @@ def main(config):
         LOGGER.info('===============================================')
         model_saver.save(model, global_step, optimizer=optimizer, rewrite_optimizer=True)
 
-        val_metrics = validate(model, val_dataloader)
+        val_metrics = validate(model, val_loader)
         LOGGER.info(f'=================Validation=================')
         metric_str = ', '.join(['%s: %.4f' % (lk, lv) for lk, lv in val_metrics.items()])
         LOGGER.info(metric_str)
@@ -306,38 +308,36 @@ def main(config):
 @torch.no_grad()
 def validate(model, val_loader, num_batches_per_step=5):
     model.eval()
-    pos_loss, rot_loss, open_loss, total_loss, num_examples, num_batches = 0, 0, 0, 0, 0, 0
-
-    total_open_acc = 0
+    
+    pos_loss, rot_loss, open_loss, total_loss = 0, 0, 0, 0
     total_pos_l2_err, total_quat_l1_err = 0, 0
+    total_open_acc = 0
+    total_samples = 0  # Tracks total sample count across batches
+    
+    # Global accuracy tracking
+    total_pos_acc_0_01 = 0
+    total_rot_acc_0_025 = 0
+    total_rot_acc_0_05 = 0
 
     # Per-task metric storage
     per_task_metrics = {}
 
-    num_examples, num_batches = 0, 0
-
     for _ in range(num_batches_per_step):
         try:
-            batch = next(val_loader)  # Get next batch
+            batch = next(val_loader)
         except StopIteration:
-            # Dataset is exhausted; restart the dataloader with reshuffling
-            print("Validation dataset finished, reshuffling...")
-            val_loader = iter(val_dataloader)  # Reset iterator to reshuffle
-            batch = next(val_loader)  # Get first batch of new epoch
+            print("Validation dataset finished, which should not happen.")
 
         pred_action, loss = model(batch, compute_loss=True)
         pred_action = pred_action.cpu()
 
-        # print(pred_action.shape) # dim = 8
-        # print(batch["gt_quaternion"].shape) # dim = 7
-
-        # print(pred_action[..., 3:7])
-        # print(batch["gt_quaternion"])
+        batch_size = pred_action.size(0)
+        total_samples += batch_size  # Track total number of samples processed
 
         # Open accuracy
         pred_open = torch.sigmoid(pred_action[..., -1]) > 0.5
-        batch_open_acc = (pred_open == batch["gt_actions"][..., -1].cpu()).float()
-        total_open_acc += batch_open_acc.sum().item()
+        batch_open_acc = (pred_open == batch["gt_actions"][..., -1].cpu()).float().sum().item()
+        total_open_acc += batch_open_acc
 
         # Position and quaternion errors
         pos_l2 = ((pred_action[..., :3] - batch["gt_actions"][..., :3].cpu()) ** 2).sum(-1).sqrt()
@@ -345,14 +345,19 @@ def validate(model, val_loader, num_batches_per_step=5):
         quat_l1_ = (pred_action[..., 3:7] + batch["gt_quaternion"][..., :].cpu()).abs().sum(-1)
         quat_l1 = torch.min(quat_l1, quat_l1_)
 
-        # Compute threshold-based errors, float for averaging, actually 1 or 0
-        pos_acc_0_01 = (pos_l2 < 0.01).float()
-        rot_acc_0_025 = (quat_l1 < 0.025).float()
-        rot_acc_0_05 = (quat_l1 < 0.05).float()
+        # Threshold-based accuracy (0 or 1)
+        pos_acc_0_01 = (pos_l2 < 0.01).float().sum().item()
+        rot_acc_0_025 = (quat_l1 < 0.025).float().sum().item()
+        rot_acc_0_05 = (quat_l1 < 0.05).float().sum().item()
 
         # Accumulate total errors
         total_pos_l2_err += pos_l2.sum().item()
         total_quat_l1_err += quat_l1.sum().item()
+
+        # Accumulate total accuracy metrics
+        total_pos_acc_0_01 += pos_acc_0_01
+        total_rot_acc_0_025 += rot_acc_0_025
+        total_rot_acc_0_05 += rot_acc_0_05
 
         # Loss Accumulation
         if "layer_11" in loss:
@@ -365,62 +370,62 @@ def validate(model, val_loader, num_batches_per_step=5):
             total_loss += loss["total"].item()
 
         # Extract task names
-        tasks = batch["data_ids"]  # Example: ["stack_blocks_peract+11-episode62-t0", ...]
-        task_names = [task.split("+")[0] for task in tasks]  # Extract task name before "+"
+        tasks = batch["data_ids"]
+        task_names = [task.split("+")[0] for task in tasks]
 
         # Compute Per-Task Metrics
         for task_name in np.unique(task_names):
             task_mask = np.array(task_names) == task_name
+            task_count = task_mask.sum()  # Count samples for this task in batch
 
             if task_name not in per_task_metrics:
                 per_task_metrics[task_name] = {
-                    "pos_l1_err": [],
-                    "pos_l2_err": [],
-                    "quat_l1_err": [],
-                    "pos_acc_0.01": [],
-                    "rot_acc_0.025": [],
-                    "rot_acc_0.05": [],
-                    "open_acc": [],
+                    "pos_l2_err_sum": 0, "quat_l1_err_sum": 0,
+                    "pos_acc_0.01_sum": 0, "rot_acc_0.025_sum": 0, "rot_acc_0.05_sum": 0,
+                    "open_acc_sum": 0, "count": 0
                 }
 
-            # Store per-task errors and accuracy
-            per_task_metrics[task_name]["pos_l2_err"].append(pos_l2[task_mask].mean().item())
-            per_task_metrics[task_name]["quat_l1_err"].append(quat_l1[task_mask].mean().item())
-            per_task_metrics[task_name]["pos_acc_0.01"].append(pos_acc_0_01[task_mask].mean().item())
-            per_task_metrics[task_name]["rot_acc_0.025"].append(rot_acc_0_025[task_mask].mean().item())
-            per_task_metrics[task_name]["rot_acc_0.05"].append(rot_acc_0_05[task_mask].mean().item())
-            per_task_metrics[task_name]["open_acc"].append(batch_open_acc[task_mask].mean().item())
-
-        # Batch counters
-        num_examples += pred_action.size(0)
-        num_batches += 1
-        break
+            # Store per-task errors and accuracy (accumulate sums and counts)
+            per_task_metrics[task_name]["pos_l2_err_sum"] += pos_l2[task_mask].sum().item()
+            per_task_metrics[task_name]["quat_l1_err_sum"] += quat_l1[task_mask].sum().item()
+            per_task_metrics[task_name]["pos_acc_0.01_sum"] += (pos_l2[task_mask] < 0.01).float().sum().item()
+            per_task_metrics[task_name]["rot_acc_0.025_sum"] += (quat_l1[task_mask] < 0.025).float().sum().item()
+            per_task_metrics[task_name]["rot_acc_0.05_sum"] += (quat_l1[task_mask] < 0.05).float().sum().item()
+            per_task_metrics[task_name]["open_acc_sum"] += batch_open_acc
+            per_task_metrics[task_name]["count"] += task_count
 
     # Compute final averages
-    num_batches = max(num_batches, 1)
-    num_examples = max(num_examples, 1)
+    total_samples = max(total_samples, 1)
 
     metrics = {
-        # Total losses
-        "total/loss": total_loss / num_batches,
-        "total/pos_loss": pos_loss / num_batches,
-        "total/rot_loss": rot_loss / num_batches,
-        "total/open_loss": open_loss / num_batches,
+        "total/loss": total_loss / num_batches_per_step,
+        "total/pos_loss": pos_loss / num_batches_per_step,
+        "total/rot_loss": rot_loss / num_batches_per_step,
+        "total/open_loss": open_loss / num_batches_per_step,
 
         # Total errors (mean per example)
-        "total/pos_l2_err": total_pos_l2_err / num_examples,
-        "total/quat_l1_err": total_quat_l1_err / num_examples,
+        "total/pos_l2_err": total_pos_l2_err / total_samples,
+        "total/quat_l1_err": total_quat_l1_err / total_samples,
 
         # Total accuracy
-        "total/open_acc": total_open_acc / num_examples,
+        "total/open_acc": total_open_acc / total_samples,
+        "total/pos_acc_0.01": total_pos_acc_0_01 / total_samples,
+        "total/rot_acc_0.025": total_rot_acc_0_025 / total_samples,
+        "total/rot_acc_0.05": total_rot_acc_0_05 / total_samples,
     }
 
     # Store per-task metrics
     for task_name, task_data in per_task_metrics.items():
-        for metric_name, values in task_data.items():
-            metrics[f"per_task/{task_name}_{metric_name}"] = np.mean(values)
+        count = max(task_data["count"], 1)  # Prevent division by zero
+        metrics[f"per_task/{task_name}_pos_l2_err"] = task_data["pos_l2_err_sum"] / count
+        metrics[f"per_task/{task_name}_quat_l1_err"] = task_data["quat_l1_err_sum"] / count
+        metrics[f"per_task/{task_name}_pos_acc_0.01"] = task_data["pos_acc_0.01_sum"] / count
+        metrics[f"per_task/{task_name}_rot_acc_0.025"] = task_data["rot_acc_0.025_sum"] / count
+        metrics[f"per_task/{task_name}_rot_acc_0.05"] = task_data["rot_acc_0.05_sum"] / count
+        metrics[f"per_task/{task_name}_open_acc"] = task_data["open_acc_sum"] / count
 
     return metrics
+
 
 
 

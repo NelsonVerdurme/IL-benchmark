@@ -63,6 +63,11 @@ class SimplePolicyDataset(Dataset):
         else:
             self.taskvars = os.listdir(data_dir)
 
+        if kwargs.get('taskvars_filter', None):
+            self.taskvars = [ t for t in self.taskvars if t.split("_peract+")[0] in kwargs['taskvars_filter']
+            ]
+            print('taskvars_after_filter:', self.taskvars)
+
         self.lmdb_envs, self.lmdb_txns = {}, {}
         self.data_ids = []
         for taskvar in self.taskvars:

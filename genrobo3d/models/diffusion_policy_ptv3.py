@@ -261,6 +261,12 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
             txt_embeds: (batch, txt_dim)
             # batch already concate by dataloader fetch func
         '''
+
+        # print("========== batch info ==========")
+        # print(len(batch['npoints_in_batch']))
+        # print(batch['npoints_in_batch'])
+        # print("========== batch info ==========")
+
         batch = self.prepare_batch(batch) # TODO: change here to add noise
         batch = self.add_diffusion_noise(batch)
 
@@ -274,7 +280,7 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
 
         # predict posi from noise
         # predict rot and openness
-        
+
         pred_actions = self.act_proj_head.forward(
             point_outs[-1].feat, batch['npoints_in_batch'], coords=point_outs[-1].coord,
             temp=self.config.action_config.get('pos_heatmap_temp', 1),
@@ -348,8 +354,86 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
             return final_pred_actions
 
     @torch.no_grad()
-    def eval_n_steps():
-        pass
+    def forward_n_steps(self, batch: dict, compute_loss=False, **kwargs):
+        '''batch data:
+            pc_fts: (batch, npoints, dim)
+            txt_embeds: (batch, txt_dim)
+            # batch already concate by dataloader fetch func
+        '''
+        batch = self.prepare_batch(batch) # TODO: change here to add noise
+
+        self.position_noise_scheduler.set_timesteps(
+            self.config.diffusion.total_timesteps
+        )
+        
+        gt_trans = batch['gt_actions'][:, :3]
+        init_anchor = torch.zeros_like(gt_trans)
+        noise = torch.randn(gt_trans.shape, device=gt_trans.device)
+        noise_steps = torch.ones(
+            (noise.shape[0], ),
+            device=noise.device,
+        ).mul(self.position_noise_scheduler.timesteps[0]).long()
+
+        trans_input = self.position_noise_scheduler.add_noise(
+            init_anchor, noise, noise_steps
+        )
+
+        batch["trans_input"] = trans_input
+        batch["gt_noise"] = noise
+        batch["noise_steps"] = noise_steps
+
+        # print("points shape", batch['pc_fts'].shape)
+
+        device = batch['pc_fts'].device
+
+        ptv3_batch = self.prepare_ptv3_batch(batch)
+
+        point_outs = self.ptv3_model(ptv3_batch, return_dec_layers=True)
+
+        # predict posi from noise
+        # predict rot and openness
+
+        timesteps = self.position_noise_scheduler.timesteps # [inverse order]
+
+        pred_pos, pred_rot, pred_open = None, None, None
+
+        for t in timesteps:
+            pred_actions = self.act_proj_head.forward(
+            point_outs[-1].feat, batch['npoints_in_batch'], coords=point_outs[-1].coord,
+            temp=self.config.action_config.get('pos_heatmap_temp', 1),
+            gt_pos=batch['gt_actions'][..., :3] if 'gt_actions' in batch else None,
+            dec_layers_embed=None,
+            trans_input=batch["trans_input"],
+            noise_step=t * torch.ones(len(init_anchor), device = init_anchor.device).long()
+            )
+          
+            pred_noise, pred_rot, pred_open = pred_actions
+
+            batch["trans_input"] = self.position_noise_scheduler.step(pred_noise, t, batch["trans_input"]).prev_sample
+
+        pred_pos = batch["trans_input"]
+
+        if self.config.action_config.rot_pred_type == 'rot6d':
+            # no grad
+            pred_rot = self.rot_transform.matrix_to_quaternion(
+                self.rot_transform.compute_rotation_matrix_from_ortho6d(pred_rot.data.cpu())
+            ).float().to(device)
+        elif self.config.action_config.rot_pred_type == 'euler':
+            pred_rot = pred_rot * 180
+            pred_rot = self.rot_transform.euler_to_quaternion(pred_rot.data.cpu()).float().to(device)
+        elif self.config.action_config.rot_pred_type == 'euler_delta':
+            pred_rot = pred_rot * 180
+            cur_euler_angles = R.from_quat(batch['ee_poses'][..., 3:7].data.cpu()).as_euler('xyz', degrees=True)
+            pred_rot = pred_rot.data.cpu() + cur_euler_angles
+            pred_rot = self.rot_transform.euler_to_quaternion(pred_rot).float().to(device)
+        elif self.config.action_config.rot_pred_type == 'euler_disc':
+            pred_rot = torch.argmax(pred_rot, 1).data.cpu().numpy()
+            pred_rot = np.stack([discrete_euler_to_quaternion(x, self.act_proj_head.euler_resolution) for x in pred_rot], 0)
+            pred_rot = torch.from_numpy(pred_rot).to(device)
+        final_pred_actions = torch.cat([pred_pos, pred_rot, pred_open.unsqueeze(-1)], dim=-1)
+        
+
+        return final_pred_actions
 
     def compute_loss(self, pred_actions, tgt_actions, pos_noise, npoints_in_batch=None):
         """
@@ -433,6 +517,11 @@ class SimplePolicyPTV3CA(SimplePolicyPTV3AdaNorm):
 
         self.ptv3_model = PointTransformerV3CA(**config.ptv3_config)
 
+        # print model trainable parameters total number
+        total_params = sum(p.numel() for p in self.ptv3_model.parameters() if p.requires_grad)
+        print(f"Total trainable parameters in PTV3 backbone: {total_params}")
+
+
         act_cfg = config.action_config
         self.txt_fc = nn.Linear(act_cfg.txt_ft_size, act_cfg.context_channels)
         if act_cfg.use_ee_pose:
@@ -446,12 +535,16 @@ class SimplePolicyPTV3CA(SimplePolicyPTV3AdaNorm):
             ptv3_config=config.ptv3_config, pos_bins=config.action_config.pos_bins,
         )
 
+        # print action head trainable parameters total number
+        total_params = sum(p.numel() for p in self.act_proj_head.parameters() if p.requires_grad)
+        print(f"Total trainable parameters in Action Head: {total_params}")
+
         self.apply(self._init_weights)
 
         self.rot_transform = RotationMatrixTransform()
 
         self.position_noise_scheduler = DDPMScheduler(
-            num_train_timesteps=config.diffusion.total_timesteps,
+            num_train_timesteps=self.config.diffusion.total_timesteps,
             beta_schedule="scaled_linear",
             prediction_type="epsilon",
         )
