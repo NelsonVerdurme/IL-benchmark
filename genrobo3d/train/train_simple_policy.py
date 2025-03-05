@@ -1,3 +1,4 @@
+from itertools import cycle
 import os
 import sys
 import json
@@ -95,7 +96,10 @@ def main(config):
         val_dataloader = None
 
     
-    val_loader = iter(val_dataloader)  # Initial iterator
+    val_loader = cycle(val_dataloader)  # Initial iterator
+    LOGGER.info(f'#num_steps_per_epoch: {len(trn_dataloader)}')
+    LOGGER.info(f"Validation Dataset Size: {len(val_dataset)}")
+    LOGGER.info(f"Validation Batch Size: {config.TRAIN.val_batch_size}")
 
     LOGGER.info(f'#num_steps_per_epoch: {len(trn_dataloader)}')
     if config.TRAIN.num_train_steps is None:
