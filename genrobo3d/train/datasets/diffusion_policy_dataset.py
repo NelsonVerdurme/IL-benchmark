@@ -342,12 +342,17 @@ class SimplePolicyDataset(Dataset):
 
             xyz = (xyz - centroid) / radius
             height = height / radius
+
+
+
             gt_action[:3] = (gt_action[:3] - centroid) / radius
             ee_pose[:3] = (ee_pose[:3] - centroid) / radius
             outs['pc_centroids'].append(centroid)
             outs['pc_radius'].append(radius)
 
             gt_action = np.concatenate([gt_action[:3], gt_rot, gt_action[-1:]], 0)
+
+            print(gt_action[:3])
 
             rgb = (rgb / 255.) * 2 - 1
             pc_ft = np.concatenate([xyz, rgb], 1)

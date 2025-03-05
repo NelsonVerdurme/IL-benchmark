@@ -23,7 +23,7 @@ class ActionHead(nn.Module):
     ) -> None:
         super().__init__()
         assert reduce in ['max', 'mean', 'attn', 'multiscale_max', 'multiscale_max_large']
-        assert pos_pred_type in ['heatmap_mlp', 'heatmap_mlp3', 'heatmap_mlp_topk', 'heatmap_mlp_clf', 'heatmap_normmax', 'heatmap_disc']
+        assert pos_pred_type in ['heatmap_mlp', 'heatmap_mlp3', 'heatmap_mlp_topk', 'heatmap_mlp_clf', 'heatmap_normmax', 'heatmap_disc', 'mlp']
         assert rot_pred_type in ['quat', 'rot6d', 'euler', 'euler_delta', 'euler_disc']
 
         self.reduce = reduce
@@ -42,6 +42,13 @@ class ActionHead(nn.Module):
                 nn.LeakyReLU(0.02),
                 nn.Dropout(dropout),
                 nn.Linear(hidden_size, 3 * self.pos_bins * 2)
+            )
+        elif self.pos_pred_type == 'mlp':
+            self.heatmap_mlp = nn.Sequential(
+                nn.Linear(hidden_size, hidden_size),
+                nn.LeakyReLU(0.02),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_size, 3)
             )
         else:
             output_size = 1 + 3
@@ -113,6 +120,7 @@ class ActionHead(nn.Module):
         elif self.pos_pred_type == 'heatmap_disc':
             xt = self.heatmap_mlp(point_embeds) # (npoints, 3*pos_bins)
             xt = einops.rearrange(xt, 'n (c b) -> c n b', c=3) # (3, #npoints, pos_bins)
+        
 
         if self.reduce == 'max':
             split_point_embeds = torch.split(point_embeds, npoints_in_batch)
@@ -150,6 +158,10 @@ class ActionHead(nn.Module):
             xr = action_embeds[..., :self.euler_bins*3].view(-1, self.euler_bins, 3)
         
         xo = action_embeds[..., -1]
+
+        if self.pos_pred_type == 'mlp':
+            xt = self.heatmap_mlp(pc_embeds)
+            # print('xt', xt.shape)
         
         if self.pos_pred_type == 'heatmap_mlp_topk':
             return (xt, topk_xt), xr, xo

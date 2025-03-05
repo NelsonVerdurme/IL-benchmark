@@ -25,7 +25,7 @@ class ActionHead(nn.Module):
     ) -> None:
         super().__init__()
         assert reduce in ['max', 'mean', 'attn']
-        assert pos_pred_type in ['heatmap_mlp', 'heatmap_disc']
+        assert pos_pred_type in ['heatmap_mlp', 'heatmap_disc', 'mlp']
         assert rot_pred_type in ['quat', 'rot6d', 'euler', 'euler_disc']
 
         self.reduce = reduce
@@ -51,6 +51,14 @@ class ActionHead(nn.Module):
                 nn.LeakyReLU(0.02),
                 nn.Dropout(dropout),
                 nn.Linear(hidden_size, 3 * self.pos_bins * 2)
+            )
+        elif self.pos_pred_type == 'mlp':
+            output_size = 3
+            self.heatmap_mlp = nn.Sequential(
+                nn.Linear(hidden_size + traj_embed_size, hidden_size),
+                nn.LeakyReLU(0.02),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_size, output_size)
             )
         else:
             output_size = 1 + 3
@@ -94,24 +102,7 @@ class ActionHead(nn.Module):
             point_embeds = torch.cat(
                 [point_embeds, traj_embeds.expand(point_embeds.size(0), -1, -1)], -1
             )
-
-        if self.pos_pred_type.startswith('heatmap_mlp'):
-            # (#npoints, max_traj_len, 4)
-            heatmap_embeds = self.heatmap_mlp(point_embeds)
-            heatmaps = torch.split(heatmap_embeds[..., 0], npoints_in_batch)
-            new_coords = coords.unsqueeze(1) + heatmap_embeds[..., 1:]
-            heatmaps = [torch.softmax(x / temp, dim=0)for x in heatmaps]
-            # print([x.sum() for x in heatmaps], [x.size() for x in heatmaps])
-            # print(npoints_in_batch, temp, [x.max() for x in heatmaps], [x.min() for x in heatmaps])
-            new_coords = torch.split(new_coords, npoints_in_batch)
-            xt = torch.stack([
-                torch.einsum('pt,ptc->tc', h, p) for h, p in zip(heatmaps, new_coords)
-            ], dim=0)
-            
-        elif self.pos_pred_type == 'heatmap_disc':
-            xt = self.heatmap_mlp(point_embeds) # (npoints, max_traj_len, 3*pos_bins*2)
-            xt = einops.rearrange(xt, 'n t (c b) -> t c n b', c=3) # (t, 3, #npoints, pos_bins*2)
-
+        
         if self.reduce == 'max':
             split_point_embeds = torch.split(point_embeds, npoints_in_batch)
             pc_embeds = torch.stack([torch.max(x, 0)[0] for x in split_point_embeds], 0)
@@ -140,6 +131,31 @@ class ActionHead(nn.Module):
             xr = action_embeds[..., :self.euler_bins*3]
             # (batch_size, max_traj_len, euler_bins, 3)
             xr = einops.rearrange(xr, 'n t (b c) -> n t b c', c=3)
+
+        if self.pos_pred_type.startswith('heatmap_mlp'):
+            # (#npoints, max_traj_len, 4)
+            heatmap_embeds = self.heatmap_mlp(point_embeds)
+            heatmaps = torch.split(heatmap_embeds[..., 0], npoints_in_batch)
+            new_coords = coords.unsqueeze(1) + heatmap_embeds[..., 1:]
+            heatmaps = [torch.softmax(x / temp, dim=0)for x in heatmaps]
+            # print([x.sum() for x in heatmaps], [x.size() for x in heatmaps])
+            # print(npoints_in_batch, temp, [x.max() for x in heatmaps], [x.min() for x in heatmaps])
+            new_coords = torch.split(new_coords, npoints_in_batch)
+            xt = torch.stack([
+                torch.einsum('pt,ptc->tc', h, p) for h, p in zip(heatmaps, new_coords)
+            ], dim=0)
+            
+        elif self.pos_pred_type == 'heatmap_disc':
+            xt = self.heatmap_mlp(point_embeds) # (npoints, max_traj_len, 3*pos_bins*2)
+            xt = einops.rearrange(xt, 'n t (c b) -> t c n b', c=3) # (t, 3, #npoints, pos_bins*2)
+
+        else:
+            assert self.pos_pred_type == 'mlp'
+            xt = self.heatmap_mlp(point_embeds)
+
+
+
+        
         
         # (batch_size, max_traj_len)
         xo = action_embeds[..., -2]

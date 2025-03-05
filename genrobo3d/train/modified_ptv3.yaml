@@ -5,7 +5,7 @@ checkpoint: null
 checkpoint_strict_load: False
 world_size: 1
 
-wandb_enable: False
+wandb_enable: True
 wandb_name: pt3-diff
 
 TRAIN:

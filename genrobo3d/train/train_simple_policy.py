@@ -371,7 +371,7 @@ def validate(model, val_loader, num_batches_per_step=5):
 
         # Extract task names
         tasks = batch["data_ids"]
-        task_names = [task.split("+")[0] for task in tasks]
+        task_names = [task.split("peract")[0] for task in tasks]
 
         # Compute Per-Task Metrics
         for task_name in np.unique(task_names):

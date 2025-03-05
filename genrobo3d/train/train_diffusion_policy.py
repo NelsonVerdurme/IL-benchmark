@@ -361,7 +361,7 @@ def validate(model, val_loader, num_batches_per_step=5):
 
         # Extract task names
         tasks = batch["data_ids"]
-        task_names = [task.split("+")[0] for task in tasks]
+        task_names = [task.split("_peract")[0] for task in tasks]
 
         # Compute Per-Task Metrics
         for task_name in np.unique(task_names):
@@ -381,7 +381,7 @@ def validate(model, val_loader, num_batches_per_step=5):
             per_task_metrics[task_name]["pos_acc_0.01_sum"] += (pos_l2[task_mask] < 0.01).float().sum().item()
             per_task_metrics[task_name]["rot_acc_0.025_sum"] += (quat_l1[task_mask] < 0.025).float().sum().item()
             per_task_metrics[task_name]["rot_acc_0.05_sum"] += (quat_l1[task_mask] < 0.05).float().sum().item()
-            per_task_metrics[task_name]["open_acc_sum"] += batch_open_acc
+            per_task_metrics[task_name]["open_acc_sum"] += (pred_open[task_mask] == batch["gt_actions"][task_mask, -1].cpu()).float().sum().item()
             per_task_metrics[task_name]["count"] += task_count
 
     # Compute final averages
