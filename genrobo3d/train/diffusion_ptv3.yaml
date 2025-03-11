@@ -97,6 +97,7 @@ VAL_DATASET:
   real_robot: False
   
 MODEL:
+  mini_batches: 2
   diffusion:
     total_timesteps: 50
   model_class: SimplePolicyPTV3CA

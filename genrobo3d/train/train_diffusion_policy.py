@@ -34,9 +34,10 @@ from genrobo3d.train.datasets.diffusion_policy_dataset import (
     SimplePolicyDataset, base_collate_fn, ptv3_collate_fn
 )
 
-from genrobo3d.models.diffusion_policy_ptv3 import (
+from genrobo3d.models.sdp_ptv3 import (
     SimplePolicyPTV3AdaNorm, SimplePolicyPTV3CA, SimplePolicyPTV3Concat
 )
+
 
 import wandb
 # Import hydra and omegaconf for Hydra-based config loading

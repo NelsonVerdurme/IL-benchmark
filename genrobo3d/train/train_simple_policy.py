@@ -33,9 +33,13 @@ from genrobo3d.train.optim.misc import build_optimizer
 from genrobo3d.configs.default import get_config
 
 from genrobo3d.train.datasets.loader import build_dataloader
-from genrobo3d.train.datasets.simple_policy_dataset import (
+# from genrobo3d.train.datasets.simple_policy_dataset import (
+#     SimplePolicyDataset, base_collate_fn, ptv3_collate_fn
+# )
+from genrobo3d.train.datasets.diffusion_policy_dataset import (
     SimplePolicyDataset, base_collate_fn, ptv3_collate_fn
 )
+
 
 from genrobo3d.models.simple_policy_ptv3 import (
     SimplePolicyPTV3AdaNorm, SimplePolicyPTV3CA, SimplePolicyPTV3Concat
@@ -79,14 +83,14 @@ def main(config):
 
     # load data training set
     dataset_class, dataset_collate_fn = DATASET_FACTORY[config.MODEL.model_class]
-    trn_dataset = dataset_class(**config.TRAIN_DATASET)
+    trn_dataset = dataset_class(**config.TRAIN_DATASET, taskvars_filter=config.TRAIN.taskvars_filter)
     LOGGER.info(f'#num_train: {len(trn_dataset)}')
     trn_dataloader, pre_epoch = build_dataloader(
         trn_dataset, dataset_collate_fn, True, config
     )
 
     if config.VAL_DATASET.use_val:
-        val_dataset = dataset_class(**config.VAL_DATASET)
+        val_dataset = dataset_class(**config.VAL_DATASET, taskvars_filter=config.TRAIN.taskvars_filter)
         LOGGER.info(f"#num_val: {len(val_dataset)}")
         val_dataloader = torch.utils.data.DataLoader(
             val_dataset, batch_size=config.TRAIN.val_batch_size,
@@ -375,7 +379,7 @@ def validate(model, val_loader, num_batches_per_step=5):
 
         # Extract task names
         tasks = batch["data_ids"]
-        task_names = [task.split("peract")[0] for task in tasks]
+        task_names = [task.split("_peract")[0] for task in tasks]
 
         # Compute Per-Task Metrics
         for task_name in np.unique(task_names):
@@ -395,7 +399,7 @@ def validate(model, val_loader, num_batches_per_step=5):
             per_task_metrics[task_name]["pos_acc_0.01_sum"] += (pos_l2[task_mask] < 0.01).float().sum().item()
             per_task_metrics[task_name]["rot_acc_0.025_sum"] += (quat_l1[task_mask] < 0.025).float().sum().item()
             per_task_metrics[task_name]["rot_acc_0.05_sum"] += (quat_l1[task_mask] < 0.05).float().sum().item()
-            per_task_metrics[task_name]["open_acc_sum"] += batch_open_acc
+            per_task_metrics[task_name]["open_acc_sum"] += (pred_open[task_mask] == batch["gt_actions"][task_mask, -1].cpu()).float().sum().item()
             per_task_metrics[task_name]["count"] += task_count
 
     # Compute final averages

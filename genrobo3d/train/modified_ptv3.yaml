@@ -34,6 +34,10 @@ TRAIN:
   grad_norm: 10
   n_workers: 4
   pin_mem: True
+  taskvars_filter: [
+    "turn_tap",
+    "stack_blocks",
+  ]
 
 TRAIN_DATASET:
   data_dir: ${oc.env:HOME}/data/train/keysteps_bbox_pcd/voxel1cm
