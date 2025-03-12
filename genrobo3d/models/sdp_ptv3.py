@@ -531,9 +531,8 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
 
             # update coord and context
 
-            outs['coord'] = self.position_noise_scheduler.step(pred_noise, t, batch["trans_input"]).prev_sample
-
-
+            outs['coord'] = self.position_noise_scheduler.step(pred_noise, t, outs['coord']).prev_sample
+            outs['feat'] = outs['coord'].clone()
 
 
 
