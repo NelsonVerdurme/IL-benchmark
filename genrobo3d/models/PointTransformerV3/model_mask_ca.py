@@ -1947,7 +1947,7 @@ class PTv3withNeck(PointTransformerV3):
                     for dec_block in self.dec[i]:
                         point = dec_block(point)
                         if type(dec_block) == CABlock:
-                            self.layer_cache.append(point)
+                            self.layer_cache.append(Point(point))
         return point
     
     def forward_only_neck(self, data_dict, return_dec_layers=False):

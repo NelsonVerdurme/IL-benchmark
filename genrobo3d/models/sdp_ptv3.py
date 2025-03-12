@@ -298,7 +298,7 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
             'grid_size': self.config.action_config.voxel_size,
             'offset': offset,
             'batch': offset2batch(offset), # tensor([0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2])
-            'feat': trans_input, 
+            'feat': trans_input.clone(), 
             'context': context_emb,
         }
         return outs
@@ -461,7 +461,7 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
         point_outs = self.ptv3_model(ptv3_batch, return_dec_layers=True)
 
         # predict posi from noise
-        # predict rot and openness
+        # predict rot and openness 
 
         timesteps = self.position_noise_scheduler.timesteps # [inverse order]
 
@@ -531,7 +531,8 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
 
             # update coord and context
 
-            outs['coord'] = self.position_noise_scheduler.step(pred_noise, t, batch["trans_input"]).prev_sample
+            outs['coord'] = self.position_noise_scheduler.step(pred_noise, t, outs['coord']).prev_sample
+            outs['feat'] = outs['coord'].clone()
 
 
 
