@@ -780,6 +780,8 @@ class SerializedPooling(PointModule):
             point_dict["context"] = point.context
         if "context_offset" in point.keys():
             point_dict["context_offset"] = point.context_offset
+        if "grid_size" in point.keys():
+            point_dict["grid_size"] = point.grid_size * self.stride
 
         if self.traceable:
             point_dict["pooling_inverse"] = cluster
@@ -1955,9 +1957,11 @@ class PTv3withNeck(PointTransformerV3):
         anchor = self.anchor_proj(anchor)
 
 
-        # print("layer_cache size", len(self.layer_cache))
-        # for i in self.layer_cache:
-        #     print(i.feat.shape)
+        print("layer_cache size", len(self.layer_cache))
+        for i in self.layer_cache:
+            print(i.grid_coord)
+            print(i.grid_size)
+            print(i.feat.shape)
 
         for i in range(len(self.nec)):
             # print("anchor size", anchor.feat.shape)
@@ -1965,3 +1969,53 @@ class PTv3withNeck(PointTransformerV3):
             # print("neck block", i)
             anchor = self.nec[i](anchor, self.layer_cache[i])
         return anchor
+    
+def compute_query_index(noise_anchor: Point, point: Point, length):
+    pass
+
+def compute_support_conv(noise_anchor: Point, point: Point, length):
+
+def extract_aligned_features(noise_anchor: Point, point: Point):
+    """
+    Efficiently extracts features from B at voxel locations of A.
+    Zeros out unmatched locations.
+    """
+    device = point.feat.device
+    feat_dim = point.feat.shape[1]
+
+    # Prepare indices (batch, voxel coord) for hashing
+    A_indices = torch.cat([noise_anchor.batch[:, None], noise_anchor.grid_coord], dim=1)
+    B_indices = torch.cat([point.batch[:, None], point.grid_coord], dim=1)
+
+    # Hash scales (unique mapping to integers)
+    spatial_shape = point.sparse_shape
+    hash_scale = torch.tensor(
+        [spatial_shape[0] * spatial_shape[1] * spatial_shape[2],
+         spatial_shape[1] * spatial_shape[2],
+         spatial_shape[2],
+         1],
+        device=point.feat.device
+    )
+
+    # Compute hashes
+    A_hash = (A_indices * hash_scale).sum(dim=1)
+    B_hash = (B_indices * hash_scale).sum(dim=1)
+
+    # Efficient intersection using torch functions
+    B_hash_sorted, indices_B = torch.sort(B_hash)
+    idx_in_B = torch.searchsorted(B_hash_sorted, A_hash)
+
+    # Clamp indices to be within range
+    idx_in_B_clamped = torch.clamp(idx_in_B, 0, B_hash_sorted.size(0) - 1)
+    matched = B_hash_sorted[idx_in_B_clamped] == A_hash
+    matched_B_indices = indices_B[idx_in_B[matched]]
+
+    # Initialize zero features for noise_anchor
+    noise_feat = torch.zeros((len(noise_anchor.coord), point.feat.size(1)), device=point.feat.device)
+
+    # Assign matched features from B
+    noise_feat[matched_mask] = point.feat[indices_B[idx_in_B[matched_mask]]]
+
+    noise_anchor.feat = noise_feat
+
+    return noise_anchor

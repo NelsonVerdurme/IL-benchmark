@@ -537,6 +537,7 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
 
 
 
+
         pred_pos = outs['coord']
 
         if self.config.action_config.rot_pred_type == 'rot6d':
