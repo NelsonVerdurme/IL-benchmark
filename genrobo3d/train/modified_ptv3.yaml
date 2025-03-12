@@ -14,8 +14,8 @@ TRAIN:
   freeze_params:
     encoder: False
     decoder: False
-  train_batch_size: 6
-  val_batch_size: 6
+  train_batch_size: 60
+  val_batch_size: 60
   val_batches: 20
   gradient_accumulation_steps: 1
   num_epochs: null
@@ -52,7 +52,7 @@ TRAIN_DATASET:
   rot_type: euler_disc
   pos_type: disc
   instr_embed_type: all
-  all_step_in_batch: True
+  all_step_in_batch: False
   include_last_step: False
   rm_table: True
   rm_robot: box_keep_gripper
@@ -81,7 +81,7 @@ VAL_DATASET:
   rot_type: euler_disc
   pos_type: disc
   instr_embed_type: all
-  all_step_in_batch: True
+  all_step_in_batch: False
   include_last_step: False
   rm_table: True
   rm_robot: box_keep_gripper
