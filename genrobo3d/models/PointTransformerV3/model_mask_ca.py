@@ -1974,6 +1974,7 @@ def compute_query_index(noise_anchor: Point, point: Point, length):
     pass
 
 def compute_support_conv(noise_anchor: Point, point: Point, length):
+    pass
 
 def extract_aligned_features(noise_anchor: Point, point: Point):
     """
