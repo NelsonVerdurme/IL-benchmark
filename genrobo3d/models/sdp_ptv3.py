@@ -40,7 +40,7 @@ class ActionHead(nn.Module):
     ) -> None:
         super().__init__()
         assert reduce in ['max', 'mean', 'attn', 'multiscale_max', 'multiscale_max_large']
-        assert pos_pred_type in ['heatmap_mlp', 'heatmap_mlp3', 'heatmap_mlp_topk', 'heatmap_mlp_clf', 'heatmap_normmax', 'heatmap_disc']
+        assert pos_pred_type in ['heatmap_mlp', 'heatmap_mlp3', 'heatmap_mlp_topk', 'heatmap_mlp_clf', 'heatmap_normmax', 'heatmap_disc', 'diffuse']
         assert rot_pred_type in ['quat', 'rot6d', 'euler', 'euler_delta', 'euler_disc']
 
         self.reduce = reduce
@@ -408,7 +408,10 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
             pred_rot = torch.argmax(pred_rot, 1).data.cpu().numpy()
             pred_rot = np.stack([discrete_euler_to_quaternion(x, self.act_proj_head.euler_resolution) for x in pred_rot], 0)
             pred_rot = torch.from_numpy(pred_rot).to(device)
-        final_pred_actions = torch.cat([pred_pos, pred_rot, pred_open.unsqueeze(-1)], dim=-1)
+        
+        # final_pred_actions = torch.cat([pred_pos, pred_rot, pred_open.unsqueeze(-1)], dim=-1)
+
+        final_pred_actions = None
         
         if compute_loss:
             losses = self.compute_loss(
@@ -482,10 +485,6 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
             step_embeds = self.stepid_embedding(batch['step_ids'])
             ctx_embeds += step_embeds
 
-        context_emb = self.noise_embedding(noise_steps)
-
-
-        context_emb = context_emb + ctx_embeds
         batch["trans_input"] = trans_input
         batch["gt_noise"] = noise
         batch["noise_steps"] = noise_steps
@@ -503,7 +502,7 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
             'offset': offset,
             'batch': offset2batch(offset), # tensor([0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2])
             'feat': trans_input, 
-            'context': context_emb,
+            'context': None, # to be update in the loop
         }
 
         pred_pos, pred_rot, pred_open = None, None, None
@@ -520,6 +519,10 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
         pred_rot, pred_open = pred_actions
 
         for t in timesteps:
+            noise_steps = t * torch.ones(len(init_anchor), device = init_anchor.device).long()
+
+            context_emb = self.noise_embedding(noise_steps)
+            outs['context'] = ctx_embeds + context_emb
             anchor_outs = self.ptv3_model.forward_only_neck(outs)
             pred_noise = self.act_proj_head.forward_diffuse(
                 anchor_outs.feat
@@ -531,10 +534,7 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
             outs['coord'] = self.position_noise_scheduler.step(pred_noise, t, batch["trans_input"]).prev_sample
 
 
-            noise_steps = t * torch.ones(len(init_anchor), device = init_anchor.device).long()
 
-            context_emb = self.noise_embedding(noise_steps)
-            outs['context'] = ctx_embeds + context_emb
 
         pred_pos = outs['coord']
 

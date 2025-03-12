@@ -149,7 +149,7 @@ MODEL:
     reduce: max
     max_traj_len: 1
     dim_actions: 7
-    pos_pred_type: heatmap_disc
+    pos_pred_type: diffuse # heatmap_disc
     pos_heatmap_temp: 0.1
     rot_pred_type: euler_disc
     dropout: 0.2
