@@ -106,13 +106,13 @@ MODEL:
     order: ["z", "z-trans", "hilbert", "hilbert-trans"]
     stride: [2, 2, 2, 2]
     enc_depths: [1, 1, 1, 1, 1]
-    enc_channels: [64, 128, 256, 512, 768]
+    enc_channels: [60, 120, 240, 480, 640]
     enc_num_head: [2, 4, 8, 16, 32]
-    enc_patch_size: [128, 128, 128, 128, 128]
+    enc_patch_size: [120, 120, 120, 120, 120]
     dec_depths: [1, 1, 1, 1]
-    dec_channels: [128, 128, 256, 512]
+    dec_channels: [120, 120, 240, 480]
     dec_num_head: [4, 4, 8, 16]
-    dec_patch_size: [128, 128, 128, 128]
+    dec_patch_size: [120, 120, 120, 120]
     mlp_ratio: 4
     qkv_bias: True
     qk_scale: null

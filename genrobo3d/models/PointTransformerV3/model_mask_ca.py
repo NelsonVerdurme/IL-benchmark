@@ -28,6 +28,52 @@ except ImportError:
 
 from .serialization import encode
 
+class RotaryPositionEncoding3D(nn.Module):
+
+    def __init__(self, feature_dim, pe_type="Rotary3D"):
+        super().__init__()
+        self.feature_dim = feature_dim
+        self.pe_type = pe_type
+
+    @torch.no_grad()
+    def forward(self, XYZ):
+        """
+        @param XYZ: [B,N,3]
+        @return:
+        """
+        npoint, _ = XYZ.shape
+        x_position, y_position, z_position = XYZ[..., 0:1], XYZ[..., 1:2], XYZ[..., 2:3]
+        div_term = torch.exp(
+            torch.arange(
+                0, self.feature_dim // 3, 2, dtype=torch.float, device=XYZ.device
+            )
+            * (-math.log(10000.0) / (self.feature_dim // 3))
+        )
+        div_term = div_term.view(1, 1, -1)  # [1, 1, d//6]
+
+        sinx = torch.sin(x_position * div_term)  # [B, N, d//6]
+        cosx = torch.cos(x_position * div_term)
+        siny = torch.sin(y_position * div_term)
+        cosy = torch.cos(y_position * div_term)
+        sinz = torch.sin(z_position * div_term)
+        cosz = torch.cos(z_position * div_term)
+
+        sinx, cosx, siny, cosy, sinz, cosz = map(
+            lambda feat: torch.stack([feat, feat], -1).view(npoint, -1),
+            [sinx, cosx, siny, cosy, sinz, cosz],
+        )
+
+        cos_pos = torch.cat([cosx, cosy, cosz], dim=-1).detach()
+        sin_pos = torch.cat([sinx, siny, sinz], dim=-1).detach()
+        
+        return cos_pos.unsqueeze(1) , sin_pos.unsqueeze(1) 
+
+
+def embed_rotary(x, cos, sin):
+    x2 = torch.stack([-x[..., 1::2], x[..., ::2]], dim=-1).reshape_as(x).contiguous()
+    x = x * cos + x2 * sin
+    return x
+
 
 @torch.inference_mode()
 def offset2bincount(offset):
@@ -1241,6 +1287,76 @@ class CABlock(PointModule):
         point.sparse_conv_feat = point.sparse_conv_feat.replace_feature(point.feat)
         return point
 
+class CCBlock(PointModule):
+    '''
+    Cross-Attention and Convolution Block
+    '''
+    def __init__(
+        self, channels, num_heads, kv_channels=None, attn_drop=0.0, proj_drop=0.0,
+        mlp_ratio=4.0, norm_layer=nn.LayerNorm, act_layer=nn.GELU, pre_norm=True,
+        qk_norm=False, enable_flash=True, conv_indice_key=None, conv_out_channels=None,
+    ):
+        super().__init__()
+        self.channels = channels
+        self.pre_norm = pre_norm
+
+        self.norm1 = PointSequential(norm_layer(channels))
+        self.attn = CrossAttention(
+            channels=channels,
+            num_heads=num_heads,
+            kv_channels=kv_channels,
+            attn_drop=attn_drop,
+            proj_drop=proj_drop,
+            qk_norm=qk_norm,
+            enable_flash=enable_flash,
+        )
+        self.norm2 = PointSequential(norm_layer(channels))
+        self.mlp = PointSequential(
+            MLP(
+                in_channels=channels,
+                hidden_channels=int(channels * mlp_ratio),
+                out_channels=channels,
+                act_layer=act_layer,
+                drop=proj_drop,
+            )
+        )
+        self.conv = PointSequential(
+            spconv.SubMConv3d(
+                channels,
+                conv_out_channels,
+                kernel_size=3,
+                bias=True,
+                indice_key=conv_indice_key,
+            ),
+            nn.Linear(conv_out_channels, conv_out_channels),
+            norm_layer(conv_out_channels),
+        )
+
+    def forward(self, point: Point):
+        shortcut = point.feat
+        if self.pre_norm:
+            point = self.norm1(point)
+        point = self.attn(point)
+        point.feat = shortcut + point.feat
+        if not self.pre_norm:
+            point = self.norm1(point)
+
+        shortcut = point.feat
+        if self.pre_norm:
+            point = self.norm2(point)
+        point = self.mlp(point)
+        point.feat = shortcut + point.feat
+        if not self.pre_norm:
+            point = self.norm2(point)
+        point.sparse_conv_feat = point.sparse_conv_feat.replace_feature(point.feat)
+
+        # before = point
+
+        # point = self.conv(point)
+
+        conv_result = self.conv(Point(point))
+        return point, conv_result
+
 
 class PointTransformerV3CA(PointTransformerV3):
     def __init__(
@@ -1520,27 +1636,50 @@ class QuerySupportAttention(PointModule):
         self.proj_drop = nn.Dropout(proj_drop)
         self.softmax = nn.Softmax(dim=-1)
 
+
+
         self.channels = channels
         self.num_heads = num_heads
         self.head_dim = channels // num_heads
+
+        # print("channels", channels)
+        # print("num_heads", num_heads)
+        # print("head_dim", self.head_dim)
+
         self.scale = self.head_dim ** -0.5
         self.qk_norm = qk_norm
         self.enable_flash = enable_flash
 
+        self.roper = RotaryPositionEncoding3D(self.head_dim)
+
         # TODO: eps should be 1 / 65530 if using fp16 (eps=1e-6)
-        # self.q_norm = nn.LayerNorm(self.head_dim, elementwise_affine=True, eps=1e-6) if self.qk_norm else nn.Identity() # TODO: why not use LayerNorm
+        self.q_norm = nn.LayerNorm(self.head_dim, elementwise_affine=True, eps=1e-6) if self.qk_norm else nn.Identity() # TODO: why not use LayerNorm
         self.k_norm = nn.LayerNorm(self.head_dim, elementwise_affine=True, eps=1e-6) if self.qk_norm else nn.Identity()
 
     def forward(self, anchor: Point, point: Point):
         device = point.feat.device
 
+        # calc 3d-rope
+
         q = self.q(anchor.feat).view(-1, self.num_heads, self.head_dim)
         kv = self.kv(point.feat).view(-1, 2, self.num_heads, self.head_dim)
 
-        # print("qkv shape", q.shape, kv.shape)
+        # apply rope at q and k, not v.
+        q_cos, q_sin = self.roper(anchor.coord)
+        k_cos, k_sin = self.roper(point.coord)
 
-        # q = self.q_norm(q)
+        # print("q_cos shape", q_cos.shape)
+        # print("q_sin shape", q_sin.shape)
+        # print("k_cos shape", k_cos.shape)
+        # print("k_sin shape", k_sin.shape)
+        # print("q shape", q.shape)
+        # print("kv shape", kv.shape)
+
+        # print("qkv shape", q.shape, kv.shape)
+        q = embed_rotary(q, q_cos, q_sin)
+        q = self.q_norm(q)
         # apply Film here
+        k = embed_rotary(kv[:, 0], k_cos, k_sin)
         k = self.k_norm(kv[:, 0])
         kv = torch.stack([k, kv[:, 1]], dim=1)
 
@@ -1702,6 +1841,7 @@ class PTv3withNeck(PointTransformerV3):
         self.cls_mode = cls_mode
         self.shuffle_orders = shuffle_orders
         self.layer_cache = []
+        self.conv_cache = []
 
         assert self.num_stages == len(stride) + 1
         assert self.num_stages == len(enc_depths)
@@ -1882,7 +2022,7 @@ class PTv3withNeck(PointTransformerV3):
                         name=f"block{i}",
                     )
                     dec.add(
-                        CABlock(
+                        CCBlock(
                             channels=dec_channels[s],
                             num_heads=dec_num_head[s],
                             kv_channels=ctx_channels,
@@ -1894,14 +2034,16 @@ class PTv3withNeck(PointTransformerV3):
                             pre_norm=pre_norm,
                             qk_norm=qk_norm,
                             enable_flash=enable_flash,
+                            conv_indice_key=f"stage{s}",
+                            conv_out_channels=dec_channels[0],
                         ),
-                        name=f"ca_block{i}",
+                        name=f"cc_block{i}",
                     )
                 self.dec.add(module=dec, name=f"dec{s}")
                 self.nec.add(module=NeckBlock(
                             in_channels=dec_channels[0],
                             out_channels=dec_channels[0],
-                            num_heads=dec_num_head[s],
+                            num_heads=dec_num_head[0],
                             kv_channels=dec_channels[s + 1],
                             mlp_ratio=mlp_ratio,
                             attn_drop=attn_drop,
@@ -1932,6 +2074,7 @@ class PTv3withNeck(PointTransformerV3):
 
         layer_outputs = [self._pack_point_dict(point)]
         self.layer_cache.clear()
+        self.conv_cache.clear()
         self.layer_cache.append(Point(point))
 
 
@@ -1939,17 +2082,25 @@ class PTv3withNeck(PointTransformerV3):
             if return_dec_layers:
                 for i in range(len(self.dec)):
                     for dec_block in self.dec[i]:
-                        point = dec_block(point)
-                        if type(dec_block) == CABlock:
+                        if type(dec_block) == CCBlock:
+                            point, conv = dec_block(point)
+                            self.conv_cache.append(conv)
                             layer_outputs.append(self._pack_point_dict(Point(point)))
                             self.layer_cache.append(Point(point))
+                        else:
+                            point = dec_block(point)
+
                 return layer_outputs
             else:
                 for i in range(len(self.dec)):
                     for dec_block in self.dec[i]:
-                        point = dec_block(point)
-                        if type(dec_block) == CABlock:
-                            self.layer_cache.append(Point(point))
+                        if type(dec_block) == CCBlock:
+                            point, conv = dec_block(point)
+                            self.conv_cache.append(conv)
+                            self.layer_cache.append(Point(point))   
+                        else:                     
+                            point = dec_block(point)
+
         return point
     
     def forward_only_neck(self, data_dict, return_dec_layers=False):
@@ -1957,17 +2108,28 @@ class PTv3withNeck(PointTransformerV3):
         anchor = self.anchor_proj(anchor)
 
 
-        print("layer_cache size", len(self.layer_cache))
-        for i in self.layer_cache:
-            print(i.grid_coord)
-            print(i.grid_size)
-            print(i.feat.shape)
+        # print("layer_cache size", len(self.layer_cache))
+        # print("conv_cache size", len(self.conv_cache))
+        # for i in self.layer_cache:
+        #     print(i.grid_coord)
+        #     print(i.grid_size)
+        #     print(i.feat.shape)
+
+        # for i in self.conv_cache:
+        #     print(i.grid_coord)
+        #     print(i.grid_size)
+        #     print(i.feat.shape)
+        
+        # align query and support index
 
         for i in range(len(self.nec)):
             # print("anchor size", anchor.feat.shape)
             # print("point size", self.layer_cache[i].feat.shape)
             # print("neck block", i)
             anchor = self.nec[i](anchor, self.layer_cache[i])
+            # find local feautures
+            
+            # add local features
         return anchor
     
 def compute_query_index(noise_anchor: Point, point: Point, length):
