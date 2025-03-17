@@ -156,7 +156,7 @@ MODEL:
     pos_bins: 15
     pos_bin_size: 0.01
   loss_config:
-    pos_weight: 1
+    pos_weight: 10
     rot_weight: 1
 
 

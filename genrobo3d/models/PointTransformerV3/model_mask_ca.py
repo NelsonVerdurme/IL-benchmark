@@ -1369,6 +1369,35 @@ class CCBlock(PointModule):
 
         conv_result = self.conv(Point(point))
         return point, conv_result
+    
+class ConvBlock(PointModule):
+    '''
+    Cross-Attention and Convolution Block
+    '''
+    def __init__(
+        self, channels, norm_layer=nn.LayerNorm, conv_indice_key=None, conv_out_channels=None,
+    ):
+        super().__init__()
+
+        self.conv = PointSequential(
+            spconv.SubMConv3d(
+                channels,
+                conv_out_channels,
+                kernel_size=3,
+                bias=True,
+                indice_key=conv_indice_key,
+            ),
+            nn.Linear(conv_out_channels, conv_out_channels),
+            norm_layer(conv_out_channels),
+        )
+
+    def forward(self, point: Point):
+        # before = point
+
+        # point = self.conv(point)
+
+        conv_result = self.conv(Point(point))
+        return conv_result
 
 
 class PointTransformerV3CA(PointTransformerV3):
@@ -1983,6 +2012,13 @@ class PTv3withNeck(PointTransformerV3):
                     )
             if len(enc) != 0:
                 self.enc.add(module=enc, name=f"enc{s}")
+                
+        self.mid_conv = ConvBlock(
+                channels=enc_channels[-1],
+                norm_layer=ln_layer,
+                conv_indice_key=f"stage{self.num_stages}",
+                conv_out_channels=dec_channels[0],
+            )
 
         # decoder
         if not self.cls_mode:
@@ -2035,7 +2071,7 @@ class PTv3withNeck(PointTransformerV3):
                         name=f"block{i}",
                     )
                     dec.add(
-                        CCBlock(
+                        CABlock(
                             channels=dec_channels[s],
                             num_heads=dec_num_head[s],
                             kv_channels=ctx_channels,
@@ -2047,10 +2083,17 @@ class PTv3withNeck(PointTransformerV3):
                             pre_norm=pre_norm,
                             qk_norm=qk_norm,
                             enable_flash=enable_flash,
+                        ),
+                        name=f"ca_block{i}",
+                    )
+                    dec.add(
+                        ConvBlock(
+                            channels=dec_channels[s],
+                            norm_layer=ln_layer,
                             conv_indice_key=f"stage{s}",
                             conv_out_channels=dec_channels[0],
                         ),
-                        name=f"cc_block{i}",
+                        name=f"conv{i}",
                     )
                 self.dec.add(module=dec, name=f"dec{s}")
                 self.nec.add(module=NeckBlock(
@@ -2067,6 +2110,21 @@ class PTv3withNeck(PointTransformerV3):
                             qk_norm=qk_norm,
                             enable_flash=enable_flash,
                         ), name=f"neck{s}")
+        self.nec.add(module=NeckBlock(
+                            in_channels=dec_channels[0],
+                            out_channels=dec_channels[0],
+                            num_heads=dec_num_head[0],
+                            kv_channels=dec_channels[0],
+                            mlp_ratio=mlp_ratio,
+                            attn_drop=attn_drop,
+                            proj_drop=proj_drop,
+                            norm_layer=anchor_ln_layer, 
+                            act_layer=act_layer,
+                            pre_norm=pre_norm,
+                            qk_norm=qk_norm,
+                            enable_flash=enable_flash,
+                        ), name=f"neck_final")
+        self.nec_layer_num = len(self.nec) # including the very middle layer
 
     def forward(self, data_dict, return_dec_layers=False):
         """
@@ -2084,33 +2142,41 @@ class PTv3withNeck(PointTransformerV3):
         point = self.embedding(point)
         point = self.enc(point)
         # print('after', offset2bincount(point.offset))
+        
+        conv = self.mid_conv(point)
 
         layer_outputs = [self._pack_point_dict(point)]
         self.layer_cache.clear()
         self.conv_cache.clear()
         self.layer_cache.append(Point(point))
+        conv = self.mid_conv(point)
+        self.conv_cache.append(conv)
 
 
         if not self.cls_mode:
             if return_dec_layers:
                 for i in range(len(self.dec)):
                     for dec_block in self.dec[i]:
-                        if type(dec_block) == CCBlock:
-                            point, conv = dec_block(point)
-                            self.conv_cache.append(conv)
+                        if type(dec_block) == CABlock:
+                            point = dec_block(point)
                             layer_outputs.append(self._pack_point_dict(Point(point)))
                             self.layer_cache.append(Point(point))
+                        elif type(dec_block) == ConvBlock:
+                            conv = dec_block(point)
+                            self.conv_cache.append(conv)
                         else:
-                            point = dec_block(point)
+                            point = dec_block(point) # TODO: should change
 
                 return layer_outputs
             else:
                 for i in range(len(self.dec)):
                     for dec_block in self.dec[i]:
                         if type(dec_block) == CCBlock:
-                            point, conv = dec_block(point)
+                            point = dec_block(point)
+                            self.layer_cache.append(Point(point))  
+                        elif type(dec_block) == ConvBlock:
+                            conv = dec_block(point)
                             self.conv_cache.append(conv)
-                            self.layer_cache.append(Point(point))   
                         else:                     
                             point = dec_block(point)
 
@@ -2123,6 +2189,7 @@ class PTv3withNeck(PointTransformerV3):
 
         # print("layer_cache size", len(self.layer_cache))
         # print("conv_cache size", len(self.conv_cache))
+        # print("neck size", len(self.nec))
         # for i in self.layer_cache:
         #     print(i.grid_coord)
         #     print(i.grid_size)
@@ -2130,31 +2197,30 @@ class PTv3withNeck(PointTransformerV3):
 
 
         # align query and support index
+        
 
-        for i in range(len(self.nec)):
+        for i in range(0, self.nec_layer_num):
             # print("anchor size", anchor.feat.shape)
             # print("point size", self.layer_cache[i].feat.shape)
             # print("neck block", i)
+
+            # print(self.conv_cache[i].feat.shape)
+            conv_f = self.conv_cache[i]
+            anchor.grid_based_on(conv_f)
+            index_k =torch.cat(
+            [conv_f.batch.unsqueeze(-1).int(), conv_f.grid_coord.int()], dim=1
+            ).contiguous()
+            query =torch.cat(
+            [anchor.batch.unsqueeze(-1).int(), anchor.grid_coord.int()], dim=1
+            ).contiguous()
+
+
+            q_f = retrieve_aligned_features(index_k, conv_f.feat, query, conv_f.sparse_shape)
+        
+            # add local features
+
+            anchor.feat = anchor.feat + q_f
             anchor = self.nec[i](anchor, self.layer_cache[i])
-            if i != -1:
-            # find local feautures
-                # print(i)
-                # print(self.conv_cache[i].feat.shape)
-                conv_f = self.conv_cache[i]
-                anchor.grid_based_on(conv_f)
-                index_k =torch.cat(
-                [conv_f.batch.unsqueeze(-1).int(), conv_f.grid_coord.int()], dim=1
-                ).contiguous()
-                query =torch.cat(
-                [anchor.batch.unsqueeze(-1).int(), anchor.grid_coord.int()], dim=1
-                ).contiguous()
-
-
-                q_f = retrieve_aligned_features(index_k, conv_f.feat, query, conv_f.sparse_shape)
-            
-                # add local features
-
-                anchor.feat = anchor.feat + q_f 
         return anchor
     
 def compute_query_index(noise_anchor: Point, point: Point, length):
