@@ -7,7 +7,7 @@ addict==2.4.0
 easydict==1.13
 einops==0.8.0
 filelock==3.16.1
-flash_attn==2.5.9.post1
+# flash_attn==2.5.9.post1
 Flask==3.0.3
 groq==0.11.0
 gym==0.26.2
@@ -30,12 +30,14 @@ Requests==2.32.3
 scikit_learn==1.5.2
 scipy==1.14.1
 setuptools==72.1.0
-spconv_cu120==2.3.6
+spconv_cu121
 tensorboardX==2.6.2.2
 termcolor==2.5.0
 timm==1.0.9
-torch_scatter==2.1.2 --find-links https://pytorch-geometric.com/whl/torch-2.3.0%2Bcu121.html
+# torch_scatter==2.1.2 --find-links https://pytorch-geometric.com/whl/torch-2.3.0%2Bcu121.html
 tqdm==4.66.4
 transformers==4.41.2
 typed_argument_parser==1.10.0
 yacs==0.1.8
+diffusers
+wandb
