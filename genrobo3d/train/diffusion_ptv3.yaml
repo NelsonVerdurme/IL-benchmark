@@ -34,7 +34,7 @@ TRAIN:
   grad_norm: 10
   n_workers: 4
   pin_mem: True
-taskvars_filter: [
+  taskvars_filter: [
     "close_jar",
     "insert_onto_square_peg",
     "light_bulb_in",
@@ -53,7 +53,7 @@ taskvars_filter: [
     "stack_cups",
     "sweep_to_dustpan_of_size",
     "turn_tap"
-]
+  ]
 
 TRAIN_DATASET:
   data_dir: ${oc.env:HOME}/data/train/keysteps_bbox_pcd/voxel1cm

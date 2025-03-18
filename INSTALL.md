@@ -8,13 +8,17 @@ conda activate gembench
 
 # On CLEPS, first run `module load gnu12/12.2.0`
 
-conda install nvidia/label/cuda-12.1.0::cuda
+conda install -c nvidia/label/cuda-12.1.0 cuda
 pip install torch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 --index-url https://download.pytorch.org/whl/cu121
 
 export CUDA_HOME=$HOME/conda/envs/gembench
 export CPATH=$CUDA_HOME/targets/x86_64-linux/include:$CPATH
 export LD_LIBRARY_PATH=$CUDA_HOME/targets/x86_64-linux/lib:$LD_LIBRARY_PATH
 export PATH=$CUDA_HOME/bin:$PATH
+
+# these two may encounter error
+pip install flash_attn==2.5.9.post1
+pip install torch_scatter==2.1.2 --find-links https://pytorch-geometric.com/whl/torch-2.3.0%2Bcu121.html
 
 pip install -r requirements.txt
 

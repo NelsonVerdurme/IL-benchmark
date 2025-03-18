@@ -19,3 +19,4 @@ slurm_logs
 .ipynb_checkpoints/
 outputs
 wandb
+ckpts
