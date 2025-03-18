@@ -1,0 +1,195 @@
+CMD_TRAILING_OPTS: []
+DATASET: {}
+MODEL:
+  action_config:
+    best_disc_pos: max
+    context_channels: 256
+    dim_actions: 7
+    dropout: 0.2
+    max_steps: 30
+    max_traj_len: 1
+    max_txt_len: 77
+    pos_bin_size: 0.01
+    pos_bins: 15
+    pos_heatmap_temp: 0.1
+    pos_pred_type: heatmap_disc
+    reduce: max
+    rot_pred_type: euler_disc
+    txt_ft_size: 512
+    txt_reduce: attn
+    use_ee_pose: false
+    use_step_id: false
+    voxel_size: 0.01
+  loss_config:
+    pos_weight: 1
+    rot_weight: 1
+  model_class: SimplePolicyPTV3CA
+  ptv3_config:
+    add_coords_in_attn: none
+    attn_drop: 0.1
+    cls_mode: false
+    dec_channels:
+    - 128
+    - 128
+    - 256
+    - 512
+    dec_depths:
+    - 1
+    - 1
+    - 1
+    - 1
+    dec_num_head:
+    - 4
+    - 4
+    - 8
+    - 16
+    dec_patch_size:
+    - 128
+    - 128
+    - 128
+    - 128
+    drop_path: 0.0
+    enable_flash: true
+    enable_rpe: false
+    enc_channels:
+    - 64
+    - 128
+    - 256
+    - 512
+    - 768
+    enc_depths:
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    enc_num_head:
+    - 2
+    - 4
+    - 8
+    - 16
+    - 32
+    enc_patch_size:
+    - 128
+    - 128
+    - 128
+    - 128
+    - 128
+    in_channels: 7
+    mlp_ratio: 4
+    order:
+    - z
+    - z-trans
+    - hilbert
+    - hilbert-trans
+    pdnorm_adaptive: false
+    pdnorm_affine: true
+    pdnorm_bn: false
+    pdnorm_conditions: null
+    pdnorm_decouple: false
+    pdnorm_ln: false
+    pdnorm_only_decoder: false
+    pre_norm: true
+    proj_drop: 0.1
+    qk_norm: true
+    qk_scale: null
+    qkv_bias: true
+    scaled_cosine_attn: false
+    shuffle_orders: true
+    stride:
+    - 2
+    - 2
+    - 2
+    - 2
+    upcast_attention: false
+    upcast_softmax: false
+SEED: 2024
+TRAIN:
+  betas:
+  - 0.9
+  - 0.98
+  freeze_params:
+    decoder: false
+    encoder: false
+  grad_norm: 10
+  gradient_accumulation_steps: 1
+  learning_rate: 0.0001
+  log_steps: 1000
+  lr_sched: cosine
+  n_workers: 4
+  num_cosine_cycles: null
+  num_epochs: 1334
+  num_train_steps: 300000
+  optim: adamw
+  pin_mem: true
+  resume_encoder_only: false
+  resume_training: true
+  save_steps: 10000
+  train_batch_size: 8
+  val_batch_size: 8
+  val_steps: 10000
+  warmup_steps: 5000
+  weight_decay: 0.05
+TRAIN_DATASET:
+  all_step_in_batch: true
+  aug_max_rot: 45
+  augment_pc: true
+  data_dir: /home/huser/data/train/keysteps_bbox_pcd/voxel1cm
+  include_last_step: false
+  instr_embed_file: /home/huser/data/train/keysteps_bbox_pcd/instr_embeds_clip.npy
+  instr_embed_type: all
+  num_points: 4096
+  pos_bin_size: 0.01
+  pos_bins: 15
+  pos_heatmap_no_robot: true
+  pos_heatmap_type: dist
+  pos_type: disc
+  real_robot: false
+  rm_pc_outliers: false
+  rm_pc_outliers_neighbors: 25
+  rm_robot: box_keep_gripper
+  rm_table: true
+  rot_type: euler_disc
+  same_npoints_per_example: false
+  sample_points_by_distance: false
+  taskvar_file: assets/taskvars_peract.json
+  taskvar_instr_file: assets/taskvars_instructions_peract.json
+  use_height: true
+  xyz_norm: false
+  xyz_shift: center
+VAL_DATASET:
+  all_step_in_batch: true
+  aug_max_rot: 45
+  augment_pc: true
+  data_dir: /home/huser/val/keysteps_bbox_pcd/seed100/voxel1cm
+  include_last_step: false
+  instr_embed_file: /home/huser/train/keysteps_bbox_pcd/instr_embeds_clip.npy
+  instr_embed_type: last
+  num_points: 4096
+  pos_bin_size: 0.01
+  pos_bins: 15
+  pos_heatmap_no_robot: true
+  pos_heatmap_type: dist
+  pos_type: disc
+  real_robot: false
+  rm_pc_outliers: false
+  rm_pc_outliers_neighbors: 25
+  rm_robot: none
+  rm_table: true
+  rot_type: euler_disc
+  same_npoints_per_example: false
+  sample_points_by_distance: false
+  taskvar_file: assets/taskvars_train.json
+  taskvar_instr_file: assets/taskvars_instructions_new.json
+  use_height: false
+  use_val: false
+  xyz_norm: false
+  xyz_shift: center
+checkpoint: null
+checkpoint_strict_load: false
+local_rank: 0
+output_dir: data/experiments/peract/3dlotus/v2
+rank: 0
+tfboard_log_dir: null
+world_size: 1
+
