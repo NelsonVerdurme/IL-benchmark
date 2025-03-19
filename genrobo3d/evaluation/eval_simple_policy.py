@@ -20,6 +20,7 @@ from scipy.spatial.transform import Rotation as R
 
 from genrobo3d.train.utils.misc import set_random_seed
 from genrobo3d.configs.default import get_config
+from omegaconf import OmegaConf
 
 try:
     from genrobo3d.rlbench.environments import RLBenchEnv
@@ -72,14 +73,15 @@ class Actioner(object):
         self.WORKSPACE = get_robot_workspace(real_robot=args.real_robot)
         self.device = torch.device(args.device)
 
-        config = get_config(args.exp_config, args.remained_args)
+        # config = get_config(args.exp_config, args.remained_args)
+        config = OmegaConf.load(args.exp_config)
         self.config = config
-        self.config.defrost()
-        self.config.TRAIN_DATASET.sample_points_by_distance = self.config.TRAIN_DATASET.get('sample_points_by_distance', False)
-        self.config.TRAIN_DATASET.rm_pc_outliers = self.config.TRAIN_DATASET.get('rm_pc_outliers', False)
-        self.config.TRAIN_DATASET.rm_pc_outliers_neighbors = self.config.TRAIN_DATASET.get('rm_pc_outliers_neighbors', 10)
-        self.config.TRAIN_DATASET.same_npoints_per_example = self.config.TRAIN_DATASET.get('same_npoints_per_example', False)
-        self.config.MODEL.action_config.best_disc_pos = args.best_disc_pos
+        # self.config.defrost()
+        # self.config.TRAIN_DATASET.sample_points_by_distance = self.config.TRAIN_DATASET.get('sample_points_by_distance', False)
+        # self.config.TRAIN_DATASET.rm_pc_outliers = self.config.TRAIN_DATASET.get('rm_pc_outliers', False)
+        # self.config.TRAIN_DATASET.rm_pc_outliers_neighbors = self.config.TRAIN_DATASET.get('rm_pc_outliers_neighbors', 10)
+        # self.config.TRAIN_DATASET.same_npoints_per_example = self.config.TRAIN_DATASET.get('same_npoints_per_example', False)
+        # self.config.MODEL.action_config.best_disc_pos = args.best_disc_pos
 
         if args.checkpoint is not None:
             config.checkpoint = args.checkpoint
@@ -95,7 +97,7 @@ class Actioner(object):
         self.model.to(self.device)
         self.model.eval()
 
-        self.config.freeze()
+        OmegaConf.set_readonly(self.config, True)
 
         data_cfg = self.config.TRAIN_DATASET
         self.data_cfg = data_cfg

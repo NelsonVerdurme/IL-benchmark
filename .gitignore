@@ -20,3 +20,4 @@ slurm_logs
 outputs
 wandb
 ckpts
+experiments

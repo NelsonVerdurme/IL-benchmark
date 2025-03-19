@@ -32,9 +32,15 @@ def calculate_task_statistics(file_path):
     total_sr_all_tasks = df["weighted_sr"].sum() / df["num_demos"].sum()
 
     # Print results
-    print("Success Rate Per Task:")
-    print(result)
-    print("\nTotal Success Rate Across All Tasks:", round(total_sr_all_tasks, 4))
+    # print("Success Rate Per Task:")
+    # print(result)
+    # print("\nTotal Success Rate Across All Tasks:", round(total_sr_all_tasks, 4))
+    
+    # save results inc. total SR all task to a dictionary
+    result_dict = result.to_dict()
+    result_dict["total_sr_all_tasks"] = total_sr_all_tasks
+    
+    return result_dict
 
 
 
