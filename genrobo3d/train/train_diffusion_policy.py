@@ -253,9 +253,12 @@ def main(config):
 
                 # update model params
                 if config.TRAIN.grad_norm is not None:
+                    # grad_norm = torch.nn.utils.clip_grad_norm_(
+                    #     model.parameters(), config.TRAIN.grad_norm
+                    # ) 
                     grad_norm = torch.nn.utils.clip_grad_norm_(
-                        model.parameters(), config.TRAIN.grad_norm
-                    )
+                        model.parameters(), 1000
+                    ) # TODO: remove hard-coded value
                     TB_LOGGER.add_scalar('grad_norm', grad_norm, global_step)
                     if config.wandb_enable:
                         wandb_dict.update({'grad_norm': grad_norm})

@@ -259,15 +259,27 @@ def main(config):
                 # log loss
                 # NOTE: not gathered across GPUs for efficiency
                 TB_LOGGER.step()
+                
+                # grad_norm =  torch.nn.utils.get_total_norm(model.parameters())
+                # if config.wandb_enable:
+                #     wandb_dict.update({'grad_norm': grad_norm})
+                # for all model.parameters(), calculate the norm of the gradients, but dont clip
+                
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), 1000
+                ) # TODO: delete this work around
+                if config.wandb_enable:
+                    wandb_dict.update({'grad_norm': grad_norm})
+                
 
                 # update model params
-                if config.TRAIN.grad_norm is not None:
-                    grad_norm = torch.nn.utils.clip_grad_norm_(
-                        model.parameters(), config.TRAIN.grad_norm
-                    )
-                    TB_LOGGER.add_scalar('grad_norm', grad_norm, global_step)
-                    if config.wandb_enable:
-                        wandb_dict.update({'grad_norm': grad_norm})
+                # if config.TRAIN.grad_norm is not None:
+                #     grad_norm = torch.nn.utils.clip_grad_norm_(
+                #         model.parameters(), config.TRAIN.grad_norm
+                #     )
+                #     TB_LOGGER.add_scalar('grad_norm', grad_norm, global_step)
+                #     if config.wandb_enable:
+                #         wandb_dict.update({'grad_norm': grad_norm})
                 optimizer.step()
                 optimizer.zero_grad()
                 if step % config.TRAIN.bar_steps == 0:

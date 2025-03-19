@@ -8,6 +8,7 @@ from torch.optim import Adam, Adamax
 
 from .adamw import AdamW
 from .rangerlars import RangerLars
+from .lamb import Lamb
 
 
 def build_optimizer(model, opts):
@@ -48,6 +49,8 @@ def build_optimizer(model, opts):
         OptimCls = AdamW
     elif opts.optim == 'rangerlars':
         OptimCls = RangerLars
+    elif opts.optim == 'lamb':
+        OptimCls = Lamb
     else:
         raise ValueError('invalid optimizer')
     optimizer = OptimCls(optimizer_grouped_parameters,
