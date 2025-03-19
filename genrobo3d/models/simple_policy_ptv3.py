@@ -255,7 +255,7 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
             temp=self.config.action_config.get('pos_heatmap_temp', 1),
             gt_pos=batch['gt_actions'][..., :3] if 'gt_actions' in batch else None,
             #dec_layers_embed=[point_outs[k] for k in [0, 2, 4, 6, 8]] # TODO
-            dec_layers_embed=[point_outs[k] for k in [0, 1, 2, 3, 4]] if self.config.ptv3_config.dec_depths[0] == 1 else [point_outs[k] for k in [0, 2, 4, 6, 8]] # TODO
+            dec_layers_embed=[point_outs[k] for k in [0, 1, 2, 3]] if self.config.ptv3_config.dec_depths[0] == 1 else [point_outs[k] for k in [0, 2, 4, 6, 8]] # TODO
         )
           
         pred_pos, pred_rot, pred_open = pred_actions

@@ -47,9 +47,9 @@ class ServerArguments(tap.Tap):
     best_disc_pos: str = 'max' # max, ens1
 
     record_video: bool = False
-    video_dir: str = None
+    video_dir: str = "video/"
     not_include_robot_cameras: bool = False
-    video_rotate_cam: bool = False
+    video_rotate_cam: bool = True
     video_resolution: int = 480
 
     real_robot: bool = False

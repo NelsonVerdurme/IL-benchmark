@@ -25,9 +25,9 @@ from omegaconf import OmegaConf
 try:
     from genrobo3d.rlbench.environments import RLBenchEnv
 except:
-    print('No RLBench')
+    print('No RLBench') 
 
-from genrobo3d.train.train_simple_policy import MODEL_FACTORY
+from genrobo3d.train.train_diffusion_policy import MODEL_FACTORY
 
 from genrobo3d.configs.rlbench.constants import get_robot_workspace, get_rlbench_labels
 from genrobo3d.utils.robot_box import RobotBox

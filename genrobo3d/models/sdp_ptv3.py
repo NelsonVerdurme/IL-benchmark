@@ -315,6 +315,10 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
         # print(len(batch['npoints_in_batch']))
         # print(batch['npoints_in_batch'])
         # print("========== batch info ==========")
+        
+        # if torch.eval, then turn to forward_n_steps
+        if not self.training:
+            return self.forward_n_steps(batch, compute_loss, **kwargs)
 
         batch = self.prepare_batch(batch) # TODO: change here to add noise
         
@@ -436,7 +440,7 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
 
         
         
-        gt_trans = batch['gt_actions'][:, :3]
+        gt_trans = batch['ee_poses'][:, :3] # borrow the shape
         init_anchor = torch.zeros_like(gt_trans)
         noise = torch.randn(gt_trans.shape, device=gt_trans.device)
         noise_steps = torch.ones(
@@ -489,7 +493,7 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
         batch["gt_noise"] = noise
         batch["noise_steps"] = noise_steps
 
-        npoints_in_batch = torch.ones(batch['gt_actions'].shape[0], dtype=torch.long)
+        npoints_in_batch = torch.ones(batch['ee_poses'].shape[0], dtype=torch.long)
         # offset is [n1, n1+n2, n1+n2+n3, ...]
         offset = torch.cumsum(torch.LongTensor(npoints_in_batch), dim=0).to(trans_input.device)
 
