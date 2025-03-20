@@ -51,6 +51,9 @@ def build_optimizer(model, opts):
         OptimCls = RangerLars
     elif opts.optim == 'lamb':
         OptimCls = Lamb
+    elif opts.optim == 'ralamb':
+        from .ralamb import Ralamb
+        OptimCls = Ralamb
     else:
         raise ValueError('invalid optimizer')
     optimizer = OptimCls(optimizer_grouped_parameters,

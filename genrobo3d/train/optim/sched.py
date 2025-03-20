@@ -19,6 +19,12 @@ def warmup_linear(step, warmup_step, tot_step):
         return step / warmup_step
     return max(0, (tot_step-step)/(tot_step-warmup_step))
 
+def warmup_flat(step, warmup_step, tot_step):
+    """ BERT schedule """
+    if step < warmup_step:
+        return step / warmup_step
+    return 1.0
+
 def warmup_inverse_sqrt(step, warmup_step, tot_step):
     """Decay the LR based on the inverse square root of the update number.
     We also support a warmup phase where we linearly increase the learning rate
@@ -77,6 +83,8 @@ def get_lr_sched(global_step, opts):
     # learning rate scheduling
     if opts.lr_sched == 'linear':
         func = warmup_linear
+    elif opts.lr_sched == 'flat':
+        func = warmup_flat
     elif opts.lr_sched == 'inverse_sqrt':
         func = warmup_inverse_sqrt
     elif opts.lr_sched == 'cosine':
@@ -97,6 +105,8 @@ def get_lr_sched_decay_rate(global_step, opts):
     # learning rate scheduling
     if opts.lr_sched == 'linear':
         lr_decay_fn = warmup_linear
+    elif opts.lr_sched == 'flat':
+        lr_decay_fn = warmup_flat
     elif opts.lr_sched == 'inverse_sqrt':
         lr_decay_fn = warmup_inverse_sqrt
     elif opts.lr_sched == 'cosine':

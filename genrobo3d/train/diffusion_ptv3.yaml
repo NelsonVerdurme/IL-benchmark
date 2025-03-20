@@ -25,9 +25,9 @@ TRAIN:
   bar_steps: 100
   save_steps: 30000
   val_steps: 3000 # 3000
-  optim: 'lamb' # 'adamw'
-  learning_rate: 1e-3
-  lr_sched: 'linear'
+  optim: 'ralamb' # 'adamw'
+  learning_rate: 1e-4
+  lr_sched: 'flat'
   num_cosine_cycles: null
   betas: [0.9, 0.98]
   weight_decay: 0.05
