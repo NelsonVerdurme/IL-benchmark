@@ -581,7 +581,7 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
         # print("pos_noise's shape", pos_noise.shape)
 
         # position loss
-        trans_loss = F.l1_loss(
+        trans_loss = F.mse_loss(
             pred_pos_noise, pos_noise, reduction="mean"
         )
 
