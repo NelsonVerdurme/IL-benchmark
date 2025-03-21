@@ -335,9 +335,9 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
 
         anchor = self.prepare_noise_anchor(batch)
 
-        point_outs = self.ptv3_model(ptv3_batch, return_dec_layers=True)
+        point_outs, anchor_outs = self.ptv3_model.forward_train(ptv3_batch, anchor, return_dec_layers=True)
 
-        anchor_outs = self.ptv3_model.forward_only_neck(anchor)
+        # anchor_outs = self.ptv3_model.forward_only_neck(anchor)
 
         # print("forward_success!", anchor_outs)
 
@@ -462,7 +462,7 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
 
         ptv3_batch = self.prepare_ptv3_batch(batch)
 
-        point_outs = self.ptv3_model(ptv3_batch, return_dec_layers=True)
+        point_outs = self.ptv3_model.forward_inference(ptv3_batch, return_dec_layers=True)
 
         # predict posi from noise
         # predict rot and openness 
@@ -527,7 +527,7 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
 
             context_emb = self.noise_embedding(noise_steps)
             outs['context'] = ctx_embeds + context_emb
-            anchor_outs = self.ptv3_model.forward_only_neck(outs)
+            anchor_outs = self.ptv3_model.neck_inference(outs)
             pred_noise = self.act_proj_head.forward_diffuse(
                 anchor_outs.feat
             )
@@ -537,8 +537,8 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
 
             outs['coord'] = self.position_noise_scheduler.step(pred_noise, t, outs['coord']).prev_sample
             outs['feat'] = outs['coord'].clone()
-
-
+            
+        self.ptv3_model.clear_cache()
 
         pred_pos = outs['coord']
 

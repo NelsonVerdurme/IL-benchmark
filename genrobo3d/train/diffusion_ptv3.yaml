@@ -9,6 +9,7 @@ wandb_enable: True
 wandb_name: pt3-diff
 
 TRAIN:
+  project_root: ${oc.env:HOME}/robot-3dlotus
   resume_training: True
   resume_encoder_only: False
   freeze_params:
@@ -58,8 +59,8 @@ TRAIN:
 TRAIN_DATASET:
   data_dir: ${oc.env:HOME}/data/train/keysteps_bbox_pcd/voxel1cm
   instr_embed_file: ${oc.env:HOME}/data/train/keysteps_bbox_pcd/instr_embeds_clip.npy
-  taskvar_instr_file: ../../../assets/taskvars_instructions_peract.json
-  taskvar_file: ../../../assets/taskvars_peract.json
+  taskvar_instr_file: assets/taskvars_instructions_peract.json
+  taskvar_file: assets/taskvars_peract.json
   num_points: 2000
   xyz_shift: center
   xyz_norm: False
@@ -87,8 +88,8 @@ VAL_DATASET:
   use_val: True
   data_dir: ${oc.env:HOME}/data/train/keysteps_bbox_pcd/voxel1cm
   instr_embed_file: ${oc.env:HOME}/data/train/keysteps_bbox_pcd/instr_embeds_clip.npy
-  taskvar_instr_file: ../../../assets/taskvars_instructions_peract.json
-  taskvar_file: ../../../assets/taskvars_peract.json
+  taskvar_instr_file: assets/taskvars_instructions_peract.json
+  taskvar_file: assets/taskvars_peract.json
   num_points: 2000
   xyz_shift: center
   xyz_norm: False

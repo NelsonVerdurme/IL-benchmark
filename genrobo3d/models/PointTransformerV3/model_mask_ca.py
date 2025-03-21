@@ -1395,8 +1395,13 @@ class ConvBlock(PointModule):
         # before = point
 
         # point = self.conv(point)
-
+        # print("input feature size:", point.feat.size())
         conv_result = self.conv(Point(point))
+        # conv_result = self.conv(point)
+        #print("conv result feature size:", conv_result.feat.size())
+        #print("conv input feature size:", point.feat.size())
+        #print(point.feat.data_ptr() == conv_result.feat.data_ptr())  # Are they pointing to the same memory?
+
         return conv_result
 
 
@@ -2125,8 +2130,79 @@ class PTv3withNeck(PointTransformerV3):
                             enable_flash=enable_flash,
                         ), name=f"neck_final")
         self.nec_layer_num = len(self.nec) # including the very middle layer
+        
+    @staticmethod
+    def query_from_support(anchor: Point, conv_f: Point):
+        anchor.grid_based_on(conv_f)
+        index_k =torch.cat(
+            [conv_f.batch.unsqueeze(-1).int(), conv_f.grid_coord.int()], dim=1
+        ).contiguous()
+        query =torch.cat(
+            [anchor.batch.unsqueeze(-1).int(), anchor.grid_coord.int()], dim=1
+        ).contiguous()
+        q_f = retrieve_aligned_features(index_k, conv_f.feat, query, conv_f.sparse_shape)
+        return q_f
+        
+    def forward_train(self, data_dict, anchor_dict, return_dec_layers=False):
+        """
+        A data_dict is a dictionary containing properties of a batched point cloud.
+        It should contain the following properties for PTv3:
+        1. "feat": feature of point cloud
+        2. "grid_coord": discrete coordinate after grid sampling (voxelization) or "coord" + "grid_size"
+        3. "offset" or "batch": https://github.com/Pointcept/Pointcept?tab=readme-ov-file#offset
+        """
+        point = Point(data_dict)
+        anchor = self.anchor_proj(Point(anchor_dict))
+        point.serialization(order=self.order, shuffle_orders=self.shuffle_orders)
+        point.sparsify()
+        # print('before', offset2bincount(point.offset))
 
-    def forward(self, data_dict, return_dec_layers=False):
+        point = self.embedding(point)
+        point = self.enc(point)
+        # print('after', offset2bincount(point.offset))
+        
+        conv = self.mid_conv(point)
+
+        layer_outputs = [self._pack_point_dict(point)]
+        conv = self.mid_conv(point)
+        
+        anchor.feat = anchor.feat + self.query_from_support(anchor, conv)
+        anchor = self.nec[0](anchor, point)
+
+        if not self.cls_mode:
+            if return_dec_layers:
+                for i in range(len(self.dec)):
+                    for dec_block in self.dec[i]:
+                        if type(dec_block) == CABlock:
+                            point = dec_block(point)
+                            layer_outputs.append(self._pack_point_dict(Point(point)))
+                            self.layer_cache.append(Point(point))
+                        elif type(dec_block) == ConvBlock:
+                            conv = dec_block(point)
+                            anchor.feat = anchor.feat + self.query_from_support(anchor, conv)
+                            anchor = self.nec[i+1](anchor, point)
+                            self.conv_cache.append(conv)
+                        else:
+                            point = dec_block(point) # TODO: should change
+
+                return layer_outputs, anchor
+            else:
+                raise NotImplementedError("Should Not implemented")
+                for i in range(len(self.dec)):
+                    for dec_block in self.dec[i]:
+                        if type(dec_block) == CCBlock:
+                            point = dec_block(point)
+                            self.layer_cache.append(Point(point))  
+                        elif type(dec_block) == ConvBlock:
+                            conv = dec_block(point)
+                            self.conv_cache.append(conv)
+                        else:                     
+                            point = dec_block(point)
+
+        return point, anchor
+    
+    @torch.inference_mode()
+    def forward_inference(self, data_dict,  return_dec_layers=False):
         """
         A data_dict is a dictionary containing properties of a batched point cloud.
         It should contain the following properties for PTv3:
@@ -2146,8 +2222,7 @@ class PTv3withNeck(PointTransformerV3):
         conv = self.mid_conv(point)
 
         layer_outputs = [self._pack_point_dict(point)]
-        self.layer_cache.clear()
-        self.conv_cache.clear()
+        self.clear_cache()
         self.layer_cache.append(Point(point))
         conv = self.mid_conv(point)
         self.conv_cache.append(conv)
@@ -2168,21 +2243,26 @@ class PTv3withNeck(PointTransformerV3):
                             point = dec_block(point) # TODO: should change
 
                 return layer_outputs
-            else:
-                for i in range(len(self.dec)):
-                    for dec_block in self.dec[i]:
-                        if type(dec_block) == CCBlock:
-                            point = dec_block(point)
-                            self.layer_cache.append(Point(point))  
-                        elif type(dec_block) == ConvBlock:
-                            conv = dec_block(point)
-                            self.conv_cache.append(conv)
-                        else:                     
-                            point = dec_block(point)
+            # else:
+            #     for i in range(len(self.dec)):
+            #         for dec_block in self.dec[i]:
+            #             if type(dec_block) == CCBlock:
+            #                 point = dec_block(point)
+            #                 self.layer_cache.append(Point(point))  
+            #             elif type(dec_block) == ConvBlock:
+            #                 conv = dec_block(point)
+            #                 self.conv_cache.append(conv)
+            #             else:                     
+            #                 point = dec_block(point)
 
         return point
+
+    def clear_cache(self):
+        self.layer_cache.clear()
+        self.conv_cache.clear()
     
-    def forward_only_neck(self, data_dict, return_dec_layers=False):
+    @torch.inference_mode()
+    def neck_inference(self, data_dict, return_dec_layers=False):
         anchor = Point(data_dict)
         anchor = self.anchor_proj(anchor)
 
@@ -2285,6 +2365,7 @@ def retrieve_aligned_features(indices, features, queries, spatial_shape):
     return aligned_features
 
 
+
 if __name__ == "__main__":
     # Example inputs
     indices = torch.tensor([
@@ -2314,8 +2395,8 @@ if __name__ == "__main__":
         [0, 12, 55, 6],    # matched
         [0, 10, 10, 10],   # unmatched
         [0, -1, 20, 5],    # negative (invalid)
-        [0, 25, 70, 20],
-        [1, 10, 50, 7],   # out-of-bound
+        [0, 25, 70, 20],   # out-of-bound
+        [1, 10, 50, 7],    # matched
         [2, 8, 44, 5]      # unmatched (different batch)
     ], dtype=torch.int)
 

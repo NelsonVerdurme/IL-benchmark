@@ -57,6 +57,18 @@ MODEL_FACTORY = {
     'SimplePolicyPTV3Concat': SimplePolicyPTV3Concat,
 }
 
+class InfIterator:
+    def __init__(self, dataloader):
+        self.dataloader = dataloader
+        self.iter_obj = iter(dataloader)
+
+    def next_batch(self):
+        try:
+            return next(self.iter_obj)
+        except StopIteration:
+            self.iter_obj = iter(self.dataloader)  # Reset iterator
+            return next(self.iter_obj)
+
 
 def main(config):
     OmegaConf.set_readonly(config, False)
@@ -77,14 +89,14 @@ def main(config):
 
     # load data training set
     dataset_class, dataset_collate_fn = DATASET_FACTORY[config.MODEL.model_class]
-    trn_dataset = dataset_class(**config.TRAIN_DATASET, taskvars_filter=config.TRAIN.taskvars_filter)
+    trn_dataset = dataset_class(**config.TRAIN_DATASET, taskvars_filter=config.TRAIN.taskvars_filter, project_root=config.TRAIN.project_root)
     LOGGER.info(f'#num_train: {len(trn_dataset)}')
     trn_dataloader, pre_epoch = build_dataloader(
         trn_dataset, dataset_collate_fn, True, config
     )
 
     if config.VAL_DATASET.use_val:
-        val_dataset = dataset_class(**config.VAL_DATASET, taskvars_filter=config.TRAIN.taskvars_filter)
+        val_dataset = dataset_class(**config.VAL_DATASET, taskvars_filter=config.TRAIN.taskvars_filter, project_root=config.TRAIN.project_root)
         LOGGER.info(f"#num_val: {len(val_dataset)}")
         val_dataloader = torch.utils.data.DataLoader(
             val_dataset, batch_size=config.TRAIN.val_batch_size,
@@ -92,7 +104,7 @@ def main(config):
         )
     else:
         val_dataloader = None
-    val_loader = cycle(val_dataloader)  # Initial iterator
+    val_loader = InfIterator(val_dataloader)  # Initial iterator
     LOGGER.info(f'#num_steps_per_epoch: {len(trn_dataloader)}')
     LOGGER.info(f"Validation Dataset Size: {len(val_dataset)}")
     LOGGER.info(f"Validation Batch Size: {config.TRAIN.val_batch_size}")
@@ -310,7 +322,7 @@ def main(config):
 
 
 @torch.no_grad()
-def validate(model, val_loader, num_batches_per_step=5):
+def validate(model, val_iter, num_batches_per_step=5):
     model.eval()
     
     total_pos_l2_err, total_quat_l1_err = 0, 0
@@ -327,9 +339,9 @@ def validate(model, val_loader, num_batches_per_step=5):
 
     for _ in range(num_batches_per_step):
         try:
-            batch = next(val_loader)
+            batch = val_iter.next_batch()
         except StopIteration:
-            print("Validation dataset finished, should not happen ...")
+            raise ValueError("Validation iterator exhausted. This Should not happend.")
 
         pred_action = model.forward_n_steps(batch, compute_loss=False)
         pred_action = pred_action.cpu()

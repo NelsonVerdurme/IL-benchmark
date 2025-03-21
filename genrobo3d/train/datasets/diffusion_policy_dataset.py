@@ -48,9 +48,16 @@ class SimplePolicyDataset(Dataset):
         assert pos_type in ['cont', 'disc']
         assert rot_type in ['quat', 'rot6d', 'euler', 'euler_delta', 'euler_disc']
         assert rm_robot in ['none', 'gt', 'box', 'box_keep_gripper']
+        
+        # print('dataset kwargs:', kwargs)
 
         # join script folder
-        taskvar_instr_file = os.path.join(os.path.dirname(__file__), taskvar_instr_file)
+        if kwargs.get('project_root', None):
+            # print('project_root:', kwargs['project_root'])
+            taskvar_instr_file = os.path.join(kwargs['project_root'], taskvar_instr_file)
+            # print('taskvar_instr_file:', taskvar_instr_file)
+        else:
+            taskvar_instr_file = os.path.join(os.path.dirname(__file__), taskvar_instr_file)
         self.taskvar_instrs = json.load(open(taskvar_instr_file))
         self.instr_embeds = np.load(instr_embed_file, allow_pickle=True).item()
         if instr_embed_type == 'last':
@@ -58,7 +65,10 @@ class SimplePolicyDataset(Dataset):
             
         if taskvar_file is not None:
             # join script folder
-            taskvar_file = os.path.join(os.path.dirname(__file__), taskvar_file)
+            if kwargs.get('project_root', None):
+                taskvar_file = os.path.join(kwargs['project_root'], taskvar_file)
+            else:
+                taskvar_file = os.path.join(os.path.dirname(__file__), taskvar_file)
             self.taskvars = json.load(open(taskvar_file))
         else:
             self.taskvars = os.listdir(data_dir)
@@ -67,6 +77,8 @@ class SimplePolicyDataset(Dataset):
             self.taskvars = [ t for t in self.taskvars if t.split("_peract+")[0] in kwargs['taskvars_filter']
             ]
             print('taskvars_after_filter:', self.taskvars)
+            
+        
 
         self.lmdb_envs, self.lmdb_txns = {}, {}
         self.data_ids = []
