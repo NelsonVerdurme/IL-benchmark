@@ -277,7 +277,7 @@ def main(config):
                 optimizer.step()
                 optimizer.zero_grad()
                 
-                if step % config.TRAIN.bar_steps == 0:
+            if global_step % config.TRAIN.bar_steps == 0:
                     pbar.update(config.TRAIN.bar_steps)
 
             if global_step % config.TRAIN.log_steps == 0:
