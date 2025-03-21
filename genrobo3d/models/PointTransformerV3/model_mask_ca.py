@@ -2176,12 +2176,10 @@ class PTv3withNeck(PointTransformerV3):
                         if type(dec_block) == CABlock:
                             point = dec_block(point)
                             layer_outputs.append(self._pack_point_dict(Point(point)))
-                            self.layer_cache.append(Point(point))
                         elif type(dec_block) == ConvBlock:
                             conv = dec_block(point)
                             anchor.feat = anchor.feat + self.query_from_support(anchor, conv)
                             anchor = self.nec[i+1](anchor, point)
-                            self.conv_cache.append(conv)
                         else:
                             point = dec_block(point) # TODO: should change
 
