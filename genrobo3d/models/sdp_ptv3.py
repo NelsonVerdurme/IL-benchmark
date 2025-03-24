@@ -581,9 +581,15 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
         # print("pos_noise's shape", pos_noise.shape)
 
         # position loss
-        trans_loss = F.mse_loss(
+        if self.config.loss_config.get('pos_metric', 'l2') == 'l2':
+            trans_loss = F.mse_loss(
             pred_pos_noise, pos_noise, reduction="mean"
-        )
+            )
+        else:
+            # print("using l1 loss")
+            trans_loss = F.l1_loss(
+            pred_pos_noise, pos_noise, reduction="mean"
+            )
 
         # if torch.isnan(pred_pos_noise).any() or torch.isnan(pos_noise).any():
         #     print("there is nan in pred_pos_noise or pos_noise")
