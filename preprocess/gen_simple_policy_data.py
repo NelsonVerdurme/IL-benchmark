@@ -11,8 +11,8 @@ msgpack_numpy.patch()
 
 import open3d as o3d
 
-from genrobo3d.configs.rlbench.constants import get_robot_workspace
-from genrobo3d.utils.point_cloud import voxelize_pcd
+from minidiffuser.configs.rlbench.constants import get_robot_workspace
+from minidiffuser.utils.point_cloud import voxelize_pcd
 
 
 def main():

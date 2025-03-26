@@ -13,10 +13,10 @@ import msgpack
 import msgpack_numpy
 msgpack_numpy.patch()
 
-from genrobo3d.utils.rlbench_keystep_detection import keypoint_discovery
-from genrobo3d.rlbench.coord_transforms import convert_gripper_pose_world_to_image
+from minidiffuser.utils.rlbench_keystep_detection import keypoint_discovery
+from minidiffuser.rlbench.coord_transforms import convert_gripper_pose_world_to_image
 
-from genrobo3d.rlbench.environments import RLBenchEnv
+from minidiffuser.rlbench.environments import RLBenchEnv
 
 
 def build_parser():

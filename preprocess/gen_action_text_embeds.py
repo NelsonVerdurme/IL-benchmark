@@ -4,7 +4,7 @@ import numpy as np
 
 from tqdm import tqdm
 
-from genrobo3d.vlm_models.clip_encoder import ClipEncoder, OpenClipEncoder
+from minidiffuser.vlm_models.clip_encoder import ClipEncoder, OpenClipEncoder
 
 import argparse
 
