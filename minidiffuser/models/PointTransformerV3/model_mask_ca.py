@@ -27,6 +27,7 @@ except ImportError:
     flash_attn = None
 
 from minidiffuser.models.PointTransformerV3.serialization import encode
+from minidiffuser.train.utils.ops import pad_tensors_wgrad, gen_seq_masks
 
 class RotaryPositionEncoding3D(nn.Module):
 
@@ -1744,34 +1745,33 @@ class QuerySupportAttention(PointModule):
             ).reshape(-1, self.channels)
             feat = feat.to(q.dtype)
         else:
-            raise NotImplementedError
-            # # q: (#all points, #heads, #dim)
-            # # kv: (#all words, k/v, #heads, #dim)
-            # # print(q.size(), kv.size())
-            # npoints_in_batch = offset2bincount(point.offset).data.cpu().numpy().tolist()
-            # nwords_in_batch = offset2bincount(point.context_offset).data.cpu().numpy().tolist()
-            # word_padded_masks = torch.from_numpy(
-            #     gen_seq_masks(nwords_in_batch)
-            # ).to(q.device).logical_not()
-            # # print(word_padded_masks)
+            # raise NotImplementedError
+            # q: (#all points, #heads, #dim)
+            # kv: (#all words, k/v, #heads, #dim)
+            # print(q.size(), kv.size())
+            nanchors_in_batch = offset2bincount(anchor.offset).data.cpu().numpy().tolist()
+            npoints_in_batch = offset2bincount(point.offset).data.cpu().numpy().tolist()
 
-            # q_pad = pad_tensors_wgrad(
-            #     torch.split(q, npoints_in_batch, dim=0), npoints_in_batch
-            # )
-            # kv_pad = pad_tensors_wgrad(
-            #     torch.split(kv, nwords_in_batch), nwords_in_batch
-            # )
-            # # q_pad: (batch_size, #points, #heads, #dim)
-            # # kv_pad: (batch_size, #words, k/v, #heads, #dim)
-            # # print(q_pad.size(), kv_pad.size())
-            # logits = torch.einsum('bphd,bwhd->bpwh', q_pad, kv_pad[:, :, 0]) * self.scale
-            # logits.masked_fill_(word_padded_masks.unsqueeze(1).unsqueeze(-1), -1e4)
-            # attn_probs = torch.softmax(logits, dim=2)
-            # # print(attn_probs.size())
-            # feat = torch.einsum('bpwh,bwhd->bphd', attn_probs, kv_pad[:, :, 1])
-            # feat = torch.cat([ft[:npoints_in_batch[i]] for i, ft in enumerate(feat)], 0)
-            # feat = feat.reshape(-1, self.channels).float()
-            # # print(feat.size())
+            point_padded_masks = torch.from_numpy(
+                gen_seq_masks(npoints_in_batch)
+            ).to(q.device).logical_not()
+
+            q_pad = pad_tensors_wgrad(
+                torch.split(q, nanchors_in_batch, dim=0), nanchors_in_batch
+            )
+            kv_pad = pad_tensors_wgrad(
+                torch.split(kv, npoints_in_batch), npoints_in_batch
+            )
+            # q_pad: (batch_size, #points, #heads, #dim)
+            # kv_pad: (batch_size, #words, k/v, #heads, #dim)
+            # print(q_pad.size(), kv_pad.size())
+            logits = torch.einsum('bqhd,bkhd->bqkh', q_pad, kv_pad[:, :, 0]) * self.scale
+            logits.masked_fill_(point_padded_masks.unsqueeze(1).unsqueeze(-1), -1e4)
+            attn_probs = torch.softmax(logits, dim=2)
+
+            feat = torch.einsum('bqkh,bkhd->bqhd', attn_probs, kv_pad[:, :, 1])
+            feat = torch.cat([ft[:nanchors_in_batch[i]] for i, ft in enumerate(feat)], 0)
+            feat = feat.reshape(-1, self.channels).float()
 
         # ffn
         feat = self.proj(feat)
