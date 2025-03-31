@@ -3,8 +3,8 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$COPPELIASIM_ROOT
 export QT_QPA_PLATFORM_PLUGIN_PATH=$COPPELIASIM_ROOT
 
 
-expr_dir=${HOME}/robot-3dlotus/experiments/18-cos
-ckpt_step=90000
+expr_dir=${HOME}/robot-3dlotus/experiments/18-large
+ckpt_step=119000
 seed=2025
 
 xvfb-run -a python genrobo3d/evaluation/eval_simple_policy_parrallel.py \

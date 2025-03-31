@@ -61,7 +61,7 @@ TRAIN_DATASET:
   instr_embed_file: ${oc.env:HOME}/data/train/keysteps_bbox_pcd/instr_embeds_clip.npy
   taskvar_instr_file: assets/taskvars_instructions_peract.json
   taskvar_file: assets/taskvars_peract.json
-  num_points: 2000
+  num_points: 4000
   xyz_shift: center
   xyz_norm: False
   use_height: True
@@ -90,7 +90,7 @@ VAL_DATASET:
   instr_embed_file: ${oc.env:HOME}/data/train/keysteps_bbox_pcd/instr_embeds_clip.npy
   taskvar_instr_file: assets/taskvars_instructions_peract.json
   taskvar_file: assets/taskvars_peract.json
-  num_points: 2000
+  num_points: 4000
   xyz_shift: center
   xyz_norm: False
   use_height: True

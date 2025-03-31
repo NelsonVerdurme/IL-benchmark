@@ -27,8 +27,6 @@ from minidiffuser.train.utils.distributed import set_cuda, wrap_model, all_gathe
 from minidiffuser.train.optim import get_lr_sched, get_lr_sched_decay_rate
 from minidiffuser.train.optim.misc import build_optimizer
 
-from minidiffuser.configs.default import get_config
-
 from minidiffuser.train.datasets.loader import build_dataloader
 from minidiffuser.train.datasets.diffusion_policy_dataset import (
     SimplePolicyDataset, base_collate_fn, ptv3_collate_fn
@@ -427,34 +425,6 @@ def validate(model, val_iter, num_batches_per_step=5):
         metrics[f"per_task/{task_name}_open_acc"] = task_data["open_acc_sum"] / count
 
     return metrics
-
-
-def build_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--exp-config",
-        type=str,
-        required=True,
-        help="path to config yaml containing info about experiment",
-    )
-    parser.add_argument(
-        "opts",
-        default=None,
-        nargs=argparse.REMAINDER,
-        help="Modify config options from command line (use , to separate values in a list)",
-    )
-    args = parser.parse_args()
-
-    config = get_config(args.exp_config, args.opts)
-
-    if os.path.exists(config.output_dir) and os.listdir(config.output_dir):
-        LOGGER.warning(
-            "Output directory ({}) already exists and is not empty.".format(
-                config.output_dir
-            )
-        )
-
-    return config
 
 
 # Remove the build_args function and use Hydra for config loading.

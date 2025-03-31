@@ -22,3 +22,4 @@ wandb
 ckpts
 experiments
 video
+*.egg-info
