@@ -435,7 +435,7 @@ class SerializedAttention(PointModule):
             assert (
                 upcast_softmax is False
             ), "Set upcast_softmax to False when enable Flash Attention"
-            assert flash_attn is not None, "Make sure flash_attn is installed."
+            assert flash_attn is not None, "Make sure flash_attn is installed. or set enable_flash to False"
             self.patch_size = patch_size
             self.attn_drop = attn_drop
         else:

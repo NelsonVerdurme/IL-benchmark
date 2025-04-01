@@ -84,6 +84,7 @@ class DPDataset(Dataset):
         self.data_ids = []
         for taskvar in self.taskvars:
             if not os.path.exists(os.path.join(data_dir, taskvar)):
+                print(f'{taskvar} not found in {data_dir}')
                 continue
             self.lmdb_envs[taskvar] = lmdb.open(os.path.join(data_dir, taskvar), readonly=True)
             self.lmdb_txns[taskvar] = self.lmdb_envs[taskvar].begin()

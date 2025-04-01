@@ -2,31 +2,51 @@
 
 1. Install general python packages
 ```bash
-conda create -n gembench python==3.10
+conda create -n midi python==3.10
 
-conda activate gembench
+conda activate midi
+```
 
-# On CLEPS, first run `module load gnu12/12.2.0`
+2. manually install cuda and torch. To allow local compiled RLbench co-exist with torch, we have to install torch from pip, to avoid MKL, gcc, ninja issues ...
 
+```
 conda install -c nvidia/label/cuda-12.1.0 cuda
-pip install torch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 --index-url https://download.pytorch.org/whl/cu121
 
-export CUDA_HOME=$HOME/conda/envs/gembench
+pip install torch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 --index-url https://download.pytorch.org/whl/cu121
+```
+
+(Optional, but recommend) If you are using GPUs higher than V100, compile and install flash-attn
+
+```
+export CUDA_HOME=$HOME/conda/envs/midi
 export CPATH=$CUDA_HOME/targets/x86_64-linux/include:$CPATH
 export LD_LIBRARY_PATH=$CUDA_HOME/targets/x86_64-linux/lib:$LD_LIBRARY_PATH
 export PATH=$CUDA_HOME/bin:$PATH
 
-# these two may encounter error
 pip install flash_attn==2.5.9.post1
+
+```
+
+3. Install wheels
+```
 pip install torch_scatter==2.1.2 --find-links https://pytorch-geometric.com/whl/torch-2.3.0%2Bcu121.html
-
+```
+4. Install other requirements
+```
 pip install -r requirements.txt
+```
 
-# install genrobo3d
+# Install This Package
+```
 pip install -e .
 ```
 
-2. Install RLBench
+# For headless RLBench evaluation
+x11 related lib
+```
+sudo apt-get install xorg libxcb-randr0-dev libxrender-dev libxkbcommon-dev libxkbcommon-x11-0 libavcodec-dev libavformat-dev libswscale-dev
+```
+
 ```bash
 mkdir dependencies
 cd dependencies
