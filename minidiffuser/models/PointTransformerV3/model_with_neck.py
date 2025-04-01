@@ -1879,6 +1879,7 @@ class PTv3withNeck(PointTransformerV3):
         pdnorm_only_decoder=False,
         add_coords_in_attn=False,
         scaled_cosine_attn=False, # TODO
+        local_conv=True
     ):
         PointModule.__init__(self)
         # assert enable_flash, 'only implemented flash attention'
@@ -1889,6 +1890,8 @@ class PTv3withNeck(PointTransformerV3):
         self.shuffle_orders = shuffle_orders
         self.layer_cache = []
         self.conv_cache = []
+        self.local_conv = local_conv
+        print("=== enable conv cache:", local_conv)
 
         assert self.num_stages == len(stride) + 1
         assert self.num_stages == len(enc_depths)
@@ -2018,12 +2021,13 @@ class PTv3withNeck(PointTransformerV3):
             if len(enc) != 0:
                 self.enc.add(module=enc, name=f"enc{s}")
                 
-        self.mid_conv = ConvBlock(
-                channels=enc_channels[-1],
-                norm_layer=ln_layer,
-                conv_indice_key=f"stage{self.num_stages}",
-                conv_out_channels=dec_channels[0],
-            )
+        if self.local_conv:      
+            self.mid_conv = ConvBlock(
+                    channels=enc_channels[-1],
+                    norm_layer=ln_layer,
+                    conv_indice_key=f"stage{self.num_stages}",
+                    conv_out_channels=dec_channels[0],
+                )
 
         # decoder
         if not self.cls_mode:
@@ -2091,15 +2095,16 @@ class PTv3withNeck(PointTransformerV3):
                         ),
                         name=f"ca_block{i}",
                     )
-                    dec.add(
-                        ConvBlock(
-                            channels=dec_channels[s],
-                            norm_layer=ln_layer,
-                            conv_indice_key=f"stage{s}",
-                            conv_out_channels=dec_channels[0],
-                        ),
-                        name=f"conv{i}",
-                    )
+                    if self.local_conv:
+                        dec.add(
+                            ConvBlock(
+                                channels=dec_channels[s],
+                                norm_layer=ln_layer,
+                                conv_indice_key=f"stage{s}",
+                                conv_out_channels=dec_channels[0],
+                            ),
+                            name=f"conv{i}",
+                        )
                 self.dec.add(module=dec, name=f"dec{s}")
                 self.nec.add(module=NeckBlock(
                             in_channels=dec_channels[0],
@@ -2161,12 +2166,12 @@ class PTv3withNeck(PointTransformerV3):
         point = self.enc(point)
         # print('after', offset2bincount(point.offset))
         
-        conv = self.mid_conv(point)
 
         layer_outputs = [self._pack_point_dict(point)]
-        conv = self.mid_conv(point)
+        if self.local_conv:
+            conv = self.mid_conv(point)
+            anchor.feat = anchor.feat + self.query_from_support(anchor, conv)
         
-        anchor.feat = anchor.feat + self.query_from_support(anchor, conv)
         anchor = self.nec[0](anchor, point)
 
         if not self.cls_mode:
@@ -2176,6 +2181,8 @@ class PTv3withNeck(PointTransformerV3):
                         if type(dec_block) == CABlock:
                             point = dec_block(point)
                             layer_outputs.append(self._pack_point_dict(Point(point)))
+                            if not self.local_conv:
+                                anchor = self.nec[i+1](anchor, point)
                         elif type(dec_block) == ConvBlock:
                             conv = dec_block(point)
                             anchor.feat = anchor.feat + self.query_from_support(anchor, conv)
@@ -2217,13 +2224,14 @@ class PTv3withNeck(PointTransformerV3):
         point = self.enc(point)
         # print('after', offset2bincount(point.offset))
         
-        conv = self.mid_conv(point)
+        # conv = self.mid_conv(point)
 
         layer_outputs = [self._pack_point_dict(point)]
         self.clear_cache()
         self.layer_cache.append(Point(point))
-        conv = self.mid_conv(point)
-        self.conv_cache.append(conv)
+        if self.local_conv:
+            conv = self.mid_conv(point)
+            self.conv_cache.append(conv)
 
 
         if not self.cls_mode:
@@ -2283,29 +2291,25 @@ class PTv3withNeck(PointTransformerV3):
             # print("neck block", i)
 
             # print(self.conv_cache[i].feat.shape)
-            conv_f = self.conv_cache[i]
-            anchor.grid_based_on(conv_f)
-            index_k =torch.cat(
-            [conv_f.batch.unsqueeze(-1).int(), conv_f.grid_coord.int()], dim=1
-            ).contiguous()
-            query =torch.cat(
-            [anchor.batch.unsqueeze(-1).int(), anchor.grid_coord.int()], dim=1
-            ).contiguous()
+            if self.local_conv:
+                conv_f = self.conv_cache[i]
+                anchor.grid_based_on(conv_f)
+                index_k =torch.cat(
+                [conv_f.batch.unsqueeze(-1).int(), conv_f.grid_coord.int()], dim=1
+                ).contiguous()
+                query =torch.cat(
+                [anchor.batch.unsqueeze(-1).int(), anchor.grid_coord.int()], dim=1
+                ).contiguous()
 
 
-            q_f = retrieve_aligned_features(index_k, conv_f.feat, query, conv_f.sparse_shape)
-        
-            # add local features
+                q_f = retrieve_aligned_features(index_k, conv_f.feat, query, conv_f.sparse_shape)
+            
+                # add local features
 
-            anchor.feat = anchor.feat + q_f
+                anchor.feat = anchor.feat + q_f
             anchor = self.nec[i](anchor, self.layer_cache[i])
         return anchor
     
-def compute_query_index(noise_anchor: Point, point: Point, length):
-    pass
-
-def compute_support_conv(noise_anchor: Point, point: Point, length):
-    pass
 
 def retrieve_aligned_features(indices, features, queries, spatial_shape):
     """

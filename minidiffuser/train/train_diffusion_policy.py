@@ -29,12 +29,10 @@ from minidiffuser.train.optim.misc import build_optimizer
 
 from minidiffuser.train.datasets.loader import build_dataloader
 from minidiffuser.train.datasets.diffusion_policy_dataset import (
-    SimplePolicyDataset, base_collate_fn, ptv3_collate_fn
+    DPDataset, base_collate_fn, ptv3_collate_fn
 )
 
-from minidiffuser.models.sdp_ptv3 import (
-    SimplePolicyPTV3AdaNorm, SimplePolicyPTV3CA, SimplePolicyPTV3Concat
-)
+from minidiffuser.models.batch_diffuse_ptv3 import DiffPolicyPTV3
 
 
 import wandb
@@ -44,15 +42,11 @@ from omegaconf import DictConfig, OmegaConf
 
 
 DATASET_FACTORY = {
-    'SimplePolicyPTV3AdaNorm': (SimplePolicyDataset, ptv3_collate_fn),
-    'SimplePolicyPTV3CA': (SimplePolicyDataset, ptv3_collate_fn),
-    'SimplePolicyPTV3Concat': (SimplePolicyDataset, ptv3_collate_fn),
+    'DP': (DPDataset, ptv3_collate_fn),
 }
 
 MODEL_FACTORY = {
-    'SimplePolicyPTV3AdaNorm': SimplePolicyPTV3AdaNorm,
-    'SimplePolicyPTV3CA': SimplePolicyPTV3CA,
-    'SimplePolicyPTV3Concat': SimplePolicyPTV3Concat,
+    'DP': DiffPolicyPTV3,
 }
 
 class InfIterator:

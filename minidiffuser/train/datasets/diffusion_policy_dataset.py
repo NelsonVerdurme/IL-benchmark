@@ -30,7 +30,7 @@ from minidiffuser.utils.robot_box import RobotBox
 from minidiffuser.utils.action_position_utils import get_disc_gt_pos_prob
 
 
-class SimplePolicyDataset(Dataset):
+class DPDataset(Dataset):
     def __init__(
             self, data_dir, instr_embed_file, taskvar_instr_file, taskvar_file=None,
             num_points=10000, xyz_shift='center', xyz_norm=True, use_height=False,
@@ -459,7 +459,7 @@ if __name__ == '__main__':
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-    dataset = SimplePolicyDataset(
+    dataset = DPDataset(
         'data/gembench/train_dataset/keysteps_bbox_pcd/seed0/voxel1cm',
         'data/gembench/train_dataset/keysteps_bbox_pcd/instr_embeds_clip.npy',
         'assets/taskvars_instructions_new.json',

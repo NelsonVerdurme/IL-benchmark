@@ -7,7 +7,6 @@ import numpy as np
 import einops
 
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
-from diffusers.models.embeddings import GaussianFourierProjection
 
 from minidiffuser.utils.rotation_transform import discrete_euler_to_quaternion
 from minidiffuser.models.base import BaseModel, RobotPoseEmbedding
@@ -15,8 +14,7 @@ from minidiffuser.utils.rotation_transform import RotationMatrixTransform
 from minidiffuser.models.PointTransformerV3.model import (
     PointTransformerV3, offset2bincount, offset2batch
 )
-from minidiffuser.models.PointTransformerV3.model_ca import PointTransformerV3CA
-
+from minidiffuser.models.PointTransformerV3.model_with_neck import PTv3withNeck
 from minidiffuser.utils.action_position_utils import get_best_pos_from_disc_pos
 
 
@@ -41,7 +39,7 @@ class ActionHead(nn.Module):
     ) -> None:
         super().__init__()
         assert reduce in ['max', 'mean', 'attn', 'multiscale_max', 'multiscale_max_large']
-        assert pos_pred_type in ['heatmap_mlp', 'heatmap_mlp3', 'heatmap_mlp_topk', 'heatmap_mlp_clf', 'heatmap_normmax', 'heatmap_disc']
+        assert pos_pred_type in ['heatmap_mlp', 'heatmap_mlp3', 'heatmap_mlp_topk', 'heatmap_mlp_clf', 'heatmap_normmax', 'heatmap_disc', 'diffuse']
         assert rot_pred_type in ['quat', 'rot6d', 'euler', 'euler_delta', 'euler_disc']
 
         self.reduce = reduce
@@ -88,13 +86,10 @@ class ActionHead(nn.Module):
         self.noise_t_embedding = SinusoidalTimestepEmbedding(10)
 
         self.denoise_mlp = nn.Sequential(
-            nn.Linear(input_size + 3 + 10, hidden_size),
+            nn.Linear(input_size, hidden_size),
             nn.LeakyReLU(0.02),
             nn.Dropout(dropout),
-            nn.Linear(hidden_size, hidden_size),
-            nn.LeakyReLU(0.02),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_size, 3)
+            nn.Linear(hidden_size, 3),
         )
         
     def forward(
@@ -155,35 +150,42 @@ class ActionHead(nn.Module):
         # print("trans_input_shape", trans_input.shape)
         # print("noise_emb_shape", noise_emb.shape)
 
-        xt = self.denoise_mlp(torch.cat([pc_embeds, trans_input, noise_emb], dim=-1))
+        # xt = self.denoise_mlp(torch.cat([pc_embeds, trans_input, noise_emb], dim=-1))
 
         
         xo = action_embeds[..., -1]
         
 
-        return xt, xr, xo
+        return xr, xo
 
-    def forward_disc(self):
-        pass
+    def forward_diffuse(self, point_embeds):
+        # slpit and stack at the first dim
+        # print("emb shape", point_embeds.shape)
+        # split_point_embeds = torch.split(point_embeds, num_mini_batches)
+        # batched_point_embeds = torch.stack(split_point_embeds, 0)
+        return self.denoise_mlp(point_embeds)
+        
 
-    def forward_diffuse(self):
-        pass
 
-class SimplePolicyPTV3AdaNorm(BaseModel):
-    """Adaptive batch/layer normalization conditioned on text/pose/stepid
+class DiffPolicyPTV3(BaseModel):
+    """Cross attention conditioned on text/pose/stepid
     """
     def __init__(self, config):
-        super().__init__()
+        BaseModel.__init__(self)
 
-        config.defrost()
-        config.ptv3_config.pdnorm_only_decoder = config.ptv3_config.get('pdnorm_only_decoder', False)
-        config.freeze()
-        
         self.config = config
 
-        self.ptv3_model = PointTransformerV3(**config.ptv3_config)
+        self.ptv3_model = PTv3withNeck(**config.ptv3_config)
+
+        # print model trainable parameters total number
+        total_params = sum(p.numel() for p in self.ptv3_model.parameters() if p.requires_grad)
+        print(f"Total trainable parameters in PTV3 backbone: {total_params}")
+
 
         act_cfg = config.action_config
+        self.txt_fc = nn.Linear(act_cfg.txt_ft_size, act_cfg.context_channels)
+
+
         self.txt_fc = nn.Linear(act_cfg.txt_ft_size, act_cfg.context_channels)
         if act_cfg.txt_reduce == 'attn':
             self.txt_attn_fc = nn.Linear(act_cfg.txt_ft_size, 1)
@@ -191,28 +193,79 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
             self.pose_embedding = RobotPoseEmbedding(act_cfg.context_channels)
         if act_cfg.use_step_id:
             self.stepid_embedding = nn.Embedding(act_cfg.max_steps, act_cfg.context_channels)
-
         self.act_proj_head = ActionHead(
             act_cfg.reduce, act_cfg.pos_pred_type, act_cfg.rot_pred_type, 
             config.ptv3_config.dec_channels[0], act_cfg.dim_actions, 
             dropout=act_cfg.dropout, voxel_size=act_cfg.voxel_size,
             ptv3_config=config.ptv3_config, pos_bins=config.action_config.pos_bins,
         )
-            
+
+        # print action head trainable parameters total number
+        total_params = sum(p.numel() for p in self.act_proj_head.parameters() if p.requires_grad)
+        print(f"Total trainable parameters in Action Head: {total_params}")
+
         self.apply(self._init_weights)
 
         self.rot_transform = RotationMatrixTransform()
 
+        self.position_noise_scheduler = DDPMScheduler(
+            num_train_timesteps=self.config.diffusion.total_timesteps,
+            beta_schedule="scaled_linear",
+            prediction_type="epsilon",
+        )
 
+        # simply a 3 dim tensor represent the anchor identity
+        self.anchor_embeding = nn.Parameter(torch.zeros(1, 3))
+        self.noise_embedding = SinusoidalTimestepEmbedding(256)
 
     def prepare_ptv3_batch(self, batch):
         outs = {
             'coord': batch['pc_fts'][:, :3],
             'grid_size': self.config.action_config.voxel_size,
             'offset': batch['offset'],
-            'batch': offset2batch(batch['offset']), # tensor([0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2])
+            'batch': offset2batch(batch['offset']),
             'feat': batch['pc_fts'],
         }
+        device = batch['pc_fts'].device
+
+        # encode context for each point cloud
+        txt_embeds = self.txt_fc(batch['txt_embeds'])
+        ctx_embeds = torch.split(txt_embeds, batch['txt_lens'])
+        ctx_lens = torch.LongTensor(batch['txt_lens'])
+
+        if self.config.action_config.use_ee_pose:
+            pose_embeds = self.pose_embedding(batch['ee_poses'])
+            ctx_embeds = [torch.cat([c, e.unsqueeze(0)], dim=0) for c, e in zip(ctx_embeds, pose_embeds)]
+            ctx_lens += 1
+
+        if self.config.action_config.use_step_id:
+            step_embeds = self.stepid_embedding(batch['step_ids'])
+            ctx_embeds = [torch.cat([c, e.unsqueeze(0)], dim=0) for c, e in zip(ctx_embeds, step_embeds)]
+            ctx_lens += 1
+
+        outs['context'] = torch.cat(ctx_embeds, 0)
+        outs['context_offset'] = torch.cumsum(ctx_lens, dim=0).to(device)
+
+        return outs
+
+    
+    def prepare_noise_anchor(self, batch):
+        gt_trans = batch['gt_actions'][:, :3]
+        # repeat n times as mini-batch size
+        num_repeat = self.config.mini_batches
+        gt_trans = einops.repeat(gt_trans, 'n c -> (n k) c', k=num_repeat)
+        noise = torch.randn(gt_trans.shape, device=gt_trans.device)
+        noise_steps = torch.randint(
+            0,
+            self.position_noise_scheduler.config.num_train_timesteps,
+            (noise.shape[0],),
+            device=noise.device,
+        ) # .long()?
+
+        trans_input = self.position_noise_scheduler.add_noise(
+            gt_trans, noise, noise_steps
+        )
+
         # encode context for each point cloud
         ctx_embeds = self.txt_fc(batch['txt_embeds'])
         if self.config.action_config.txt_reduce == 'attn':
@@ -232,28 +285,32 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
             step_embeds = self.stepid_embedding(batch['step_ids'])
             ctx_embeds += step_embeds
 
-        outs['context'] = ctx_embeds # one context for each point cloud
+
+        context_emb = self.noise_embedding(noise_steps)
 
 
-        return outs
-    
-    def add_diffusion_noise(self, batch):
-        gt_trans = batch['gt_actions'][:, :3]
-        noise = torch.randn(gt_trans.shape, device=gt_trans.device)
-        noise_steps = torch.randint(
-            0,
-            self.position_noise_scheduler.config.num_train_timesteps,
-            (noise.shape[0],),
-            device=noise.device,
-        ) # .long()?
-
-        trans_input = self.position_noise_scheduler.add_noise(
-            gt_trans, noise, noise_steps
-        )
+        ctx_embeds = einops.repeat(ctx_embeds, 'i j -> (repeat i) j', repeat=num_repeat)
+        context_emb = context_emb + ctx_embeds
         batch["trans_input"] = trans_input
         batch["gt_noise"] = noise
         batch["noise_steps"] = noise_steps
-        return batch
+
+        npoints_in_batch = torch.ones(batch['gt_actions'].shape[0], dtype=torch.long) * num_repeat
+        # offset is [n1, n1+n2, n1+n2+n3, ...]
+        offset = torch.cumsum(torch.LongTensor(npoints_in_batch), dim=0).to(trans_input.device)
+
+        # print("trans_input_shape", trans_input.shape)
+        # print("context_emb_shape", context_emb.shape)
+
+        outs = {
+            'coord': trans_input,
+            'grid_size': self.config.action_config.voxel_size,
+            'offset': offset,
+            'batch': offset2batch(offset), # tensor([0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2])
+            'feat': trans_input.clone(), 
+            'context': context_emb,
+        }
+        return outs
 
 
     def forward(self, batch: dict, compute_loss=False, **kwargs):
@@ -267,9 +324,17 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
         # print(len(batch['npoints_in_batch']))
         # print(batch['npoints_in_batch'])
         # print("========== batch info ==========")
+        
+        # if torch.eval, then turn to forward_n_steps
+        if not self.training:
+            return self.forward_n_steps(batch, compute_loss, **kwargs)
 
         batch = self.prepare_batch(batch) # TODO: change here to add noise
-        batch = self.add_diffusion_noise(batch)
+        
+        
+        # batch = self.add_diffusion_noise(batch)
+
+
 
         # print("points shape", batch['pc_fts'].shape)
 
@@ -277,7 +342,13 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
 
         ptv3_batch = self.prepare_ptv3_batch(batch)
 
-        point_outs = self.ptv3_model(ptv3_batch, return_dec_layers=True)
+        anchor = self.prepare_noise_anchor(batch)
+
+        point_outs, anchor_outs = self.ptv3_model.forward_train(ptv3_batch, anchor, return_dec_layers=True)
+
+        # anchor_outs = self.ptv3_model.forward_only_neck(anchor)
+
+        # print("forward_success!", anchor_outs)
 
         # predict posi from noise
         # predict rot and openness
@@ -291,7 +362,13 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
             noise_step=batch['noise_steps']
         )
           
-        pred_pos, pred_rot, pred_open = pred_actions
+        pred_rot, pred_open = pred_actions
+
+        pred_pos = self.act_proj_head.forward_diffuse(
+            anchor_outs.feat
+        )
+
+        action = pred_pos, pred_rot, pred_open
         if self.config.action_config.pos_pred_type == 'heatmap_disc':
             # TODO
             # if not compute_loss:
@@ -344,11 +421,14 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
             pred_rot = torch.argmax(pred_rot, 1).data.cpu().numpy()
             pred_rot = np.stack([discrete_euler_to_quaternion(x, self.act_proj_head.euler_resolution) for x in pred_rot], 0)
             pred_rot = torch.from_numpy(pred_rot).to(device)
-        final_pred_actions = torch.cat([pred_pos, pred_rot, pred_open.unsqueeze(-1)], dim=-1)
+        
+        # final_pred_actions = torch.cat([pred_pos, pred_rot, pred_open.unsqueeze(-1)], dim=-1)
+
+        final_pred_actions = None
         
         if compute_loss:
             losses = self.compute_loss(
-                pred_actions, batch['gt_actions'], 
+                action, batch['gt_actions'], 
                 pos_noise=batch['gt_noise'], npoints_in_batch=batch['npoints_in_batch'])
             return final_pred_actions, losses
         else:
@@ -366,8 +446,10 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
         self.position_noise_scheduler.set_timesteps(
             self.config.diffusion.total_timesteps
         )
+
         
-        gt_trans = batch['gt_actions'][:, :3]
+        
+        gt_trans = batch['ee_poses'][:, :3] # borrow the shape
         init_anchor = torch.zeros_like(gt_trans)
         noise = torch.randn(gt_trans.shape, device=gt_trans.device)
         noise_steps = torch.ones(
@@ -389,30 +471,85 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
 
         ptv3_batch = self.prepare_ptv3_batch(batch)
 
-        point_outs = self.ptv3_model(ptv3_batch, return_dec_layers=True)
+        point_outs = self.ptv3_model.forward_inference(ptv3_batch, return_dec_layers=True)
 
         # predict posi from noise
-        # predict rot and openness
+        # predict rot and openness 
 
         timesteps = self.position_noise_scheduler.timesteps # [inverse order]
 
+
+        # encode context for each point cloud
+        ctx_embeds = self.txt_fc(batch['txt_embeds'])
+        if self.config.action_config.txt_reduce == 'attn':
+            txt_weights = torch.split(self.txt_attn_fc(batch['txt_embeds']), batch['txt_lens'])
+            txt_embeds = torch.split(ctx_embeds, batch['txt_lens'])
+            ctx_embeds = []
+            for txt_weight, txt_embed in zip(txt_weights, txt_embeds):
+                txt_weight = torch.softmax(txt_weight, 0)
+                ctx_embeds.append(torch.sum(txt_weight * txt_embed, 0))
+            ctx_embeds = torch.stack(ctx_embeds, 0)
+        
+        if self.config.action_config.use_ee_pose:
+            pose_embeds = self.pose_embedding(batch['ee_poses'])
+            ctx_embeds += pose_embeds
+
+        if self.config.action_config.use_step_id:
+            step_embeds = self.stepid_embedding(batch['step_ids'])
+            ctx_embeds += step_embeds
+
+        batch["trans_input"] = trans_input
+        batch["gt_noise"] = noise
+        batch["noise_steps"] = noise_steps
+
+        npoints_in_batch = torch.ones(batch['ee_poses'].shape[0], dtype=torch.long)
+        # offset is [n1, n1+n2, n1+n2+n3, ...]
+        offset = torch.cumsum(torch.LongTensor(npoints_in_batch), dim=0).to(trans_input.device)
+
+        # print("trans_input_shape", trans_input.shape)
+        # print("context_emb_shape", context_emb.shape)
+
+        outs = {
+            'coord': trans_input,
+            'grid_size': self.config.action_config.voxel_size,
+            'offset': offset,
+            'batch': offset2batch(offset), # tensor([0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2])
+            'feat': trans_input, 
+            'context': None, # to be update in the loop
+        }
+
         pred_pos, pred_rot, pred_open = None, None, None
 
-        for t in timesteps:
-            pred_actions = self.act_proj_head.forward(
+        pred_actions = self.act_proj_head.forward(
             point_outs[-1].feat, batch['npoints_in_batch'], coords=point_outs[-1].coord,
             temp=self.config.action_config.get('pos_heatmap_temp', 1),
             gt_pos=batch['gt_actions'][..., :3] if 'gt_actions' in batch else None,
             dec_layers_embed=None,
             trans_input=batch["trans_input"],
-            noise_step=t * torch.ones(len(init_anchor), device = init_anchor.device).long()
-            )
+            noise_step=batch['noise_steps']
+        )
           
-            pred_noise, pred_rot, pred_open = pred_actions
+        pred_rot, pred_open = pred_actions
 
-            batch["trans_input"] = self.position_noise_scheduler.step(pred_noise, t, batch["trans_input"]).prev_sample
+        for t in timesteps:
+            noise_steps = t * torch.ones(len(init_anchor), device = init_anchor.device).long()
 
-        pred_pos = batch["trans_input"]
+            context_emb = self.noise_embedding(noise_steps)
+            outs['context'] = ctx_embeds + context_emb
+            anchor_outs = self.ptv3_model.neck_inference(outs)
+            pred_noise = self.act_proj_head.forward_diffuse(
+                anchor_outs.feat
+            )
+            
+
+            # update coord and context
+
+            outs['coord'] = self.position_noise_scheduler.step(pred_noise, t, outs['coord']).prev_sample
+            outs['feat'] = outs['coord'].clone()
+            
+        self.ptv3_model.clear_cache()
+
+        pred_pos = outs['coord']
 
         if self.config.action_config.rot_pred_type == 'rot6d':
             # no grad
@@ -449,10 +586,19 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
         pred_pos_noise, pred_rot, pred_open = pred_actions
         tgt_rot, tgt_open = tgt_actions[..., 3:-1], tgt_actions[..., -1]
 
+        # print("pred_pos_noise's shape", pred_pos_noise.shape)
+        # print("pos_noise's shape", pos_noise.shape)
+
         # position loss
-        trans_loss = F.l1_loss(
+        if self.config.loss_config.get('pos_metric', 'l2') == 'l2':
+            trans_loss = F.mse_loss(
             pred_pos_noise, pos_noise, reduction="mean"
-        )
+            )
+        else:
+            # print("using l1 loss")
+            trans_loss = F.l1_loss(
+            pred_pos_noise, pos_noise, reduction="mean"
+            )
 
         # if torch.isnan(pred_pos_noise).any() or torch.isnan(pos_noise).any():
         #     print("there is nan in pred_pos_noise or pos_noise")
@@ -507,129 +653,3 @@ class SimplePolicyPTV3AdaNorm(BaseModel):
             'total': total_loss
         }
 
-
-class SimplePolicyPTV3CA(SimplePolicyPTV3AdaNorm):
-    """Cross attention conditioned on text/pose/stepid
-    """
-    def __init__(self, config):
-        BaseModel.__init__(self)
-
-        self.config = config
-
-        self.ptv3_model = PointTransformerV3CA(**config.ptv3_config)
-
-        # print model trainable parameters total number
-        total_params = sum(p.numel() for p in self.ptv3_model.parameters() if p.requires_grad)
-        print(f"Total trainable parameters in PTV3 backbone: {total_params}")
-
-
-        act_cfg = config.action_config
-        self.txt_fc = nn.Linear(act_cfg.txt_ft_size, act_cfg.context_channels)
-        if act_cfg.use_ee_pose:
-            self.pose_embedding = RobotPoseEmbedding(act_cfg.context_channels)
-        if act_cfg.use_step_id:
-            self.stepid_embedding = nn.Embedding(act_cfg.max_steps, act_cfg.context_channels)
-        self.act_proj_head = ActionHead(
-            act_cfg.reduce, act_cfg.pos_pred_type, act_cfg.rot_pred_type, 
-            config.ptv3_config.dec_channels[0], act_cfg.dim_actions, 
-            dropout=act_cfg.dropout, voxel_size=act_cfg.voxel_size,
-            ptv3_config=config.ptv3_config, pos_bins=config.action_config.pos_bins,
-        )
-
-        # print action head trainable parameters total number
-        total_params = sum(p.numel() for p in self.act_proj_head.parameters() if p.requires_grad)
-        print(f"Total trainable parameters in Action Head: {total_params}")
-
-        self.apply(self._init_weights)
-
-        self.rot_transform = RotationMatrixTransform()
-
-        self.position_noise_scheduler = DDPMScheduler(
-            num_train_timesteps=self.config.diffusion.total_timesteps,
-            beta_schedule="scaled_linear",
-            prediction_type="epsilon",
-        )
-
-    def prepare_ptv3_batch(self, batch):
-        outs = {
-            'coord': batch['pc_fts'][:, :3],
-            'grid_size': self.config.action_config.voxel_size,
-            'offset': batch['offset'],
-            'batch': offset2batch(batch['offset']),
-            'feat': batch['pc_fts'],
-        }
-        device = batch['pc_fts'].device
-
-        # encode context for each point cloud
-        txt_embeds = self.txt_fc(batch['txt_embeds'])
-        ctx_embeds = torch.split(txt_embeds, batch['txt_lens'])
-        ctx_lens = torch.LongTensor(batch['txt_lens'])
-
-        if self.config.action_config.use_ee_pose:
-            pose_embeds = self.pose_embedding(batch['ee_poses'])
-            ctx_embeds = [torch.cat([c, e.unsqueeze(0)], dim=0) for c, e in zip(ctx_embeds, pose_embeds)]
-            ctx_lens += 1
-
-        if self.config.action_config.use_step_id:
-            step_embeds = self.stepid_embedding(batch['step_ids'])
-            ctx_embeds = [torch.cat([c, e.unsqueeze(0)], dim=0) for c, e in zip(ctx_embeds, step_embeds)]
-            ctx_lens += 1
-
-        outs['context'] = torch.cat(ctx_embeds, 0)
-        outs['context_offset'] = torch.cumsum(ctx_lens, dim=0).to(device)
-
-        return outs
-
-
-class SimplePolicyPTV3Concat(SimplePolicyPTV3AdaNorm):
-    """Adaptive batch/layer normalization conditioned on text/pose/stepid
-    """
-
-    def prepare_ptv3_batch(self, batch):
-        outs = {
-            'coord': batch['pc_fts'][:, :3],
-            'grid_size': self.config.action_config.voxel_size,
-            'offset': batch['offset'],
-            'batch': offset2batch(batch['offset']),
-            'feat': batch['pc_fts'],
-        }
-        # concatenate context for each point cloud
-        ctx_embeds = self.txt_fc(batch['txt_embeds'])
-        
-        if self.config.action_config.use_ee_pose:
-            pose_embeds = self.pose_embedding(batch['ee_poses'])
-            ctx_embeds += pose_embeds
-
-        if self.config.action_config.use_step_id:
-            step_embeds = self.stepid_embedding(batch['step_ids'])
-            ctx_embeds += step_embeds
-
-        npoints_in_batch = torch.from_numpy(
-            np.array(batch['npoints_in_batch'])
-        ).to(outs['feat'].device)
-        ctx_embeds = torch.repeat_interleave(ctx_embeds, npoints_in_batch, 0)
-        outs['feat'] = torch.cat([batch['pc_fts'], ctx_embeds], -1)
-
-        return outs
-
-
-if __name__ == '__main__':
-    from minidiffuser.configs.default import get_config
-
-    config = get_config('genrobo3d/configs/rlbench/simple_policy_ptv3.yaml')
-    model = SimplePolicyPTV3AdaNorm(config.MODEL).cuda()
-    # model = SimplePolicyPTV3CA(config.MODEL).cuda()
-
-    fake_batch = {
-        'pc_fts': torch.rand(100, 6),
-        'npoints_in_batch': [30, 70],
-        'offset': torch.LongTensor([30, 100]),
-        'txt_embeds': torch.rand(2, 1280),
-        'txt_lens': [1, 1],
-        'ee_poses': torch.rand(2, 8),
-        'step_ids': torch.LongTensor([0, 1]),
-        'gt_actions': torch.rand(2, 8),
-    }
-
-    outs = model(fake_batch, compute_loss=True)
-    print(outs[1])

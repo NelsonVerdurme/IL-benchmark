@@ -15,9 +15,9 @@ TRAIN:
   freeze_params:
     encoder: False
     decoder: False
-  train_batch_size: 100
-  val_batch_size: 100
-  val_batches: 20
+  train_batch_size: 2
+  val_batch_size: 2
+  val_batches: 2
   gradient_accumulation_steps: 1
   num_epochs: 1500
   num_train_steps: null
@@ -117,7 +117,7 @@ MODEL:
   mini_batches: 1
   diffusion:
     total_timesteps: 50
-  model_class: SimplePolicyPTV3CA
+  model_class: DP
   ptv3_config:
     in_channels: 7
     order: ["z", "z-trans", "hilbert", "hilbert-trans"]
@@ -153,6 +153,7 @@ MODEL:
     pdnorm_conditions: null
     pdnorm_only_decoder: False
     add_coords_in_attn: 'none'
+    local_conv: True
   
   action_config:
     voxel_size: 0.01
