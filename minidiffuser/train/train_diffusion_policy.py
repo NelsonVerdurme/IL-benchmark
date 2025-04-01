@@ -429,7 +429,7 @@ def hydra_main(config: DictConfig):
         # time_id = f"{config.MODEL.model_class}_{time.strftime('%m%d-%H')}"
         time_id = f"{time.strftime('%m%d-%H')}"
         # gnerate a UUID incase of same time_id
-        wandb.init(project='pt3-diff', name=config.wandb_name + f"{time_id}_{str(uuid.uuid4())[:8]}", config=OmegaConf.to_container(config, resolve=True))
+        wandb.init(project='mini-diff', name=config.wandb_name + f"{time_id}_{str(uuid.uuid4())[:8]}", config=OmegaConf.to_container(config, resolve=True))
         main(config)
         wandb.finish()
 
