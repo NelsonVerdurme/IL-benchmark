@@ -17,15 +17,15 @@ TRAIN:
     decoder: False
   train_batch_size: 100
   val_batch_size: 100
-  val_batches: 20
+  val_batches: 10
   gradient_accumulation_steps: 1
-  num_epochs: 800
+  num_epochs: 1500
   num_train_steps: null
   warmup_steps: 4000
   log_steps: 500
   bar_steps: 100
   save_steps: 100000000
-  val_steps: 100000000 # 3000
+  val_steps: 100 # 3000
   optim: 'adamw' # 'adamw'
   learning_rate: 2e-4
   lr_sched: 'cosine' # 'cosine'
@@ -141,7 +141,7 @@ MODEL:
     pre_norm: True
     shuffle_orders: True
     enable_rpe: False
-    enable_flash: False
+    enable_flash: True
     upcast_attention: False
     upcast_softmax: False
     cls_mode: False
