@@ -1668,7 +1668,7 @@ class PointTransformerV3CA(PointTransformerV3):
 class QuerySupportAttention(PointModule):
     def __init__(
         self, channels, num_heads, kv_channels=None, attn_drop=0, proj_drop=0, 
-        qk_norm=False, enable_flash=True
+        qk_norm=False, enable_flash=True, enable_rope=True
     ):
         super().__init__()
         if kv_channels is None:
@@ -1697,8 +1697,10 @@ class QuerySupportAttention(PointModule):
         self.scale = self.head_dim ** -0.5
         self.qk_norm = qk_norm
         self.enable_flash = enable_flash
-
-        self.roper = RotaryPositionEncoding3D(self.head_dim)
+        self.enable_rope = enable_rope
+        
+        if self.enable_rope:
+            self.roper = RotaryPositionEncoding3D(self.head_dim)
 
         # TODO: eps should be 1 / 65530 if using fp16 (eps=1e-6)
         self.q_norm = nn.LayerNorm(self.head_dim, elementwise_affine=True, eps=1e-6) if self.qk_norm else nn.Identity() # TODO: why not use LayerNorm
@@ -1707,29 +1709,24 @@ class QuerySupportAttention(PointModule):
     def forward(self, anchor: Point, point: Point):
         device = point.feat.device
 
-        # calc 3d-rope
+
 
         q = self.q(anchor.feat).view(-1, self.num_heads, self.head_dim)
         kv = self.kv(point.feat).view(-1, 2, self.num_heads, self.head_dim)
+        
+        if self.enable_rope:
+        # calc 3d-rope
 
-        # apply rope at q and k, not v.
-        q_cos, q_sin = self.roper(anchor.coord)
-        k_cos, k_sin = self.roper(point.coord)
-
-        # print("q_cos shape", q_cos.shape)
-        # print("q_sin shape", q_sin.shape)
-        # print("k_cos shape", k_cos.shape)
-        # print("k_sin shape", k_sin.shape)
-        # print("q shape", q.shape)
-        # print("kv shape", kv.shape)
-
-        # print("qkv shape", q.shape, kv.shape)
-        q = embed_rotary(q, q_cos, q_sin)
-        q = self.q_norm(q)
-        # apply Film here
-        k = embed_rotary(kv[:, 0], k_cos, k_sin)
-        k = self.k_norm(kv[:, 0])
-        kv = torch.stack([k, kv[:, 1]], dim=1)
+            q_cos, q_sin = self.roper(anchor.coord)
+            k_cos, k_sin = self.roper(point.coord)
+            # apply rope at q and k, not v.
+            # print("qkv shape", q.shape, kv.shape)
+            q = embed_rotary(q, q_cos, q_sin)
+            q = self.q_norm(q)
+            # apply Film here
+            k = embed_rotary(kv[:, 0], k_cos, k_sin)
+            k = self.k_norm(kv[:, 0])
+            kv = torch.stack([k, kv[:, 1]], dim=1)
 
         if self.enable_flash:
             cu_seqlens_q = torch.cat([torch.zeros(1).int().to(device), anchor.offset.int()], dim=0)
@@ -1785,7 +1782,7 @@ class NeckBlock(nn.Module):
     def __init__(
         self, in_channels, out_channels, num_heads, kv_channels=None, attn_drop=0.0, proj_drop=0.0,
         mlp_ratio=4.0, norm_layer=nn.LayerNorm, act_layer=nn.GELU, pre_norm=True,
-        qk_norm=False, enable_flash=True,
+        qk_norm=False, enable_flash=True, enable_rope=True
     ):
         super().__init__()
         self.in_channels = in_channels
@@ -1803,6 +1800,7 @@ class NeckBlock(nn.Module):
             proj_drop=proj_drop,
             qk_norm=qk_norm,
             enable_flash=enable_flash,
+            enable_rope=enable_rope
         )
         self.norm2 = PointSequential(norm_layer(in_channels))
         self.mlp = PointSequential(
@@ -1879,7 +1877,8 @@ class PTv3withNeck(PointTransformerV3):
         pdnorm_only_decoder=False,
         add_coords_in_attn=False,
         scaled_cosine_attn=False, # TODO
-        local_conv=True
+        local_conv=True,
+        enable_rope=True
     ):
         PointModule.__init__(self)
         # assert enable_flash, 'only implemented flash attention'
@@ -1892,6 +1891,8 @@ class PTv3withNeck(PointTransformerV3):
         self.conv_cache = []
         self.local_conv = local_conv
         print("=== enable conv cache:", local_conv)
+        self.enable_rope = enable_rope
+        print("=== enable rope:", enable_rope)
 
         assert self.num_stages == len(stride) + 1
         assert self.num_stages == len(enc_depths)
@@ -2119,6 +2120,7 @@ class PTv3withNeck(PointTransformerV3):
                             pre_norm=pre_norm,
                             qk_norm=qk_norm,
                             enable_flash=enable_flash,
+                            enable_rope=self.enable_rope,
                         ), name=f"neck{s}")
         self.nec.add(module=NeckBlock(
                             in_channels=dec_channels[0],
@@ -2133,6 +2135,7 @@ class PTv3withNeck(PointTransformerV3):
                             pre_norm=pre_norm,
                             qk_norm=qk_norm,
                             enable_flash=enable_flash,
+                            enable_rope=self.enable_rope,
                         ), name=f"neck_final")
         self.nec_layer_num = len(self.nec) # including the very middle layer
         

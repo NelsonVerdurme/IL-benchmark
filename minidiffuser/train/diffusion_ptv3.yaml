@@ -154,6 +154,7 @@ MODEL:
     pdnorm_only_decoder: False
     add_coords_in_attn: 'none'
     local_conv: True
+    enable_rope: True
   
   action_config:
     voxel_size: 0.01
