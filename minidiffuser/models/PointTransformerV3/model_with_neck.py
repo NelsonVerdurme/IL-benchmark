@@ -1722,11 +1722,13 @@ class QuerySupportAttention(PointModule):
             # apply rope at q and k, not v.
             # print("qkv shape", q.shape, kv.shape)
             q = embed_rotary(q, q_cos, q_sin)
-            q = self.q_norm(q)
+
             # apply Film here
             k = embed_rotary(kv[:, 0], k_cos, k_sin)
-            k = self.k_norm(kv[:, 0])
-            kv = torch.stack([k, kv[:, 1]], dim=1)
+            
+        q = self.q_norm(q)
+        k = self.k_norm(kv[:, 0])
+        kv = torch.stack([k, kv[:, 1]], dim=1)
 
         if self.enable_flash:
             cu_seqlens_q = torch.cat([torch.zeros(1).int().to(device), anchor.offset.int()], dim=0)
