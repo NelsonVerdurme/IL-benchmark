@@ -246,7 +246,7 @@ def main(config):
                 # learning rate scheduling
                 lr_decay_rate = get_lr_sched_decay_rate(global_step, config.TRAIN)
                 for kp, param_group in enumerate(optimizer.param_groups):
-                    param_group['lr'] = lr_this_step = max(init_lrs[kp] * lr_decay_rate, 1e-8)
+                    param_group['lr'] = lr_this_step = max(init_lrs[kp] * lr_decay_rate, 1e-5)
                 TB_LOGGER.add_scalar('lr', lr_this_step, global_step)
                 if config.wandb_enable:
                     wandb_dict.update({'lr': lr_this_step, 'global_step': global_step})
@@ -315,15 +315,17 @@ def validate(model, val_iter, num_batches_per_step=5):
     model.eval()
     
     total_pos_l2_err, total_quat_l1_err = 0, 0
+    total_quat_l1_ideal_err = 0
     total_open_acc = 0
-    total_samples = 0  # Tracks total sample count across batches
-    
-    # Global accuracy tracking
+    total_open_ideal_acc = 0
+    total_samples = 0
+
     total_pos_acc_0_01 = 0
     total_rot_acc_0_025 = 0
     total_rot_acc_0_05 = 0
+    total_rot_ideal_acc_0_025 = 0
+    total_rot_ideal_acc_0_05 = 0
 
-    # Per-task metric storage
     per_task_metrics = {}
 
     for _ in range(num_batches_per_step):
@@ -332,90 +334,111 @@ def validate(model, val_iter, num_batches_per_step=5):
         except StopIteration:
             raise ValueError("Validation iterator exhausted. This Should not happend.")
 
-        pred_action = model.forward_n_steps(batch, compute_loss=False)
+        pred_action = model.forward_n_steps(batch, compute_loss=False, is_dataset=True)
         pred_action = pred_action.cpu()
-
         batch_size = pred_action.size(0)
-        total_samples += batch_size  # Track total number of samples processed
+        total_samples += batch_size
 
-        # Open accuracy
-        pred_open = torch.sigmoid(pred_action[..., -1]) > 0.5
-        batch_open_acc = (pred_open == batch["gt_actions"][..., -1].cpu()).float().sum().item()
+        # Open predictions
+        pred_open = torch.sigmoid(pred_action[..., 7]) > 0.5
+        pred_open_ideal = torch.sigmoid(pred_action[..., -1]) > 0.5
+        gt_open = batch["gt_actions"][..., -1].cpu()
+        batch_open_acc = (pred_open == gt_open).float().sum().item()
+        batch_open_ideal_acc = (pred_open_ideal == gt_open).float().sum().item()
         total_open_acc += batch_open_acc
+        total_open_ideal_acc += batch_open_ideal_acc
 
-        # Position and quaternion errors
+        # Position error
         pos_l2 = ((pred_action[..., :3] - batch["gt_actions"][..., :3].cpu()) ** 2).sum(-1).sqrt()
-        quat_l1 = (pred_action[..., 3:7] - batch["gt_quaternion"][..., :].cpu()).abs().sum(-1)
-        quat_l1_ = (pred_action[..., 3:7] + batch["gt_quaternion"][..., :].cpu()).abs().sum(-1)
+        total_pos_l2_err += pos_l2.sum().item()
+        pos_acc_0_01 = (pos_l2 < 0.01).float().sum().item()
+        total_pos_acc_0_01 += pos_acc_0_01
+
+        # Quaternion errors
+        gt_quat = batch["gt_quaternion"][..., :].cpu()
+        quat_pred = pred_action[..., 3:7]
+        quat_pred_ideal = pred_action[..., 8:12]
+
+        quat_l1 = (quat_pred - gt_quat).abs().sum(-1)
+        quat_l1_ = (quat_pred + gt_quat).abs().sum(-1)
         quat_l1 = torch.min(quat_l1, quat_l1_)
 
-        # Threshold-based accuracy (0 or 1)
-        pos_acc_0_01 = (pos_l2 < 0.01).float().sum().item()
-        rot_acc_0_025 = (quat_l1 < 0.025).float().sum().item()
-        rot_acc_0_05 = (quat_l1 < 0.05).float().sum().item()
+        quat_l1_ideal = (quat_pred_ideal - gt_quat).abs().sum(-1)
+        quat_l1_ideal_ = (quat_pred_ideal + gt_quat).abs().sum(-1)
+        quat_l1_ideal = torch.min(quat_l1_ideal, quat_l1_ideal_)
 
-        # Accumulate total errors
-        total_pos_l2_err += pos_l2.sum().item()
         total_quat_l1_err += quat_l1.sum().item()
+        total_quat_l1_ideal_err += quat_l1_ideal.sum().item()
 
-        # Accumulate total accuracy metrics
-        total_pos_acc_0_01 += pos_acc_0_01
-        total_rot_acc_0_025 += rot_acc_0_025
-        total_rot_acc_0_05 += rot_acc_0_05
+        # Accuracy thresholds
+        total_rot_acc_0_025 += (quat_l1 < 0.025).float().sum().item()
+        total_rot_acc_0_05 += (quat_l1 < 0.05).float().sum().item()
+        total_rot_ideal_acc_0_025 += (quat_l1_ideal < 0.025).float().sum().item()
+        total_rot_ideal_acc_0_05 += (quat_l1_ideal < 0.05).float().sum().item()
 
-
-        # Extract task names
         tasks = batch["data_ids"]
         task_names = [task.split("_peract")[0] for task in tasks]
 
-        # Compute Per-Task Metrics
         for task_name in np.unique(task_names):
             task_mask = np.array(task_names) == task_name
-            task_count = task_mask.sum()  # Count samples for this task in batch
+            task_count = task_mask.sum()
 
             if task_name not in per_task_metrics:
                 per_task_metrics[task_name] = {
-                    "pos_l2_err_sum": 0, "quat_l1_err_sum": 0,
-                    "pos_acc_0.01_sum": 0, "rot_acc_0.025_sum": 0, "rot_acc_0.05_sum": 0,
-                    "open_acc_sum": 0, "count": 0
+                    "pos_l2_err_sum": 0,
+                    "quat_l1_err_sum": 0,
+                    "quat_l1_ideal_err_sum": 0,
+                    "pos_acc_0.01_sum": 0,
+                    "rot_acc_0.025_sum": 0,
+                    "rot_acc_0.05_sum": 0,
+                    "rot_ideal_acc_0.025_sum": 0,
+                    "rot_ideal_acc_0.05_sum": 0,
+                    "open_acc_sum": 0,
+                    "open_ideal_acc_sum": 0,
+                    "count": 0
                 }
 
-            # Store per-task errors and accuracy (accumulate sums and counts)
             per_task_metrics[task_name]["pos_l2_err_sum"] += pos_l2[task_mask].sum().item()
             per_task_metrics[task_name]["quat_l1_err_sum"] += quat_l1[task_mask].sum().item()
+            per_task_metrics[task_name]["quat_l1_ideal_err_sum"] += quat_l1_ideal[task_mask].sum().item()
             per_task_metrics[task_name]["pos_acc_0.01_sum"] += (pos_l2[task_mask] < 0.01).float().sum().item()
             per_task_metrics[task_name]["rot_acc_0.025_sum"] += (quat_l1[task_mask] < 0.025).float().sum().item()
             per_task_metrics[task_name]["rot_acc_0.05_sum"] += (quat_l1[task_mask] < 0.05).float().sum().item()
-            per_task_metrics[task_name]["open_acc_sum"] += (pred_open[task_mask] == batch["gt_actions"][task_mask, -1].cpu()).float().sum().item()
+            per_task_metrics[task_name]["rot_ideal_acc_0.025_sum"] += (quat_l1_ideal[task_mask] < 0.025).float().sum().item()
+            per_task_metrics[task_name]["rot_ideal_acc_0.05_sum"] += (quat_l1_ideal[task_mask] < 0.05).float().sum().item()
+            per_task_metrics[task_name]["open_acc_sum"] += (pred_open[task_mask] == gt_open[task_mask]).float().sum().item()
+            per_task_metrics[task_name]["open_ideal_acc_sum"] += (pred_open_ideal[task_mask] == gt_open[task_mask]).float().sum().item()
             per_task_metrics[task_name]["count"] += task_count
 
-    # Compute final averages
     total_samples = max(total_samples, 1)
-
     metrics = {
-
-        # Total errors (mean per example)
         "total/pos_l2_err": total_pos_l2_err / total_samples,
         "total/quat_l1_err": total_quat_l1_err / total_samples,
-
-        # Total accuracy
+        "total/quat_l1_ideal_err": total_quat_l1_ideal_err / total_samples,
         "total/open_acc": total_open_acc / total_samples,
+        "total/open_acc_ideal": total_open_ideal_acc / total_samples,
         "total/pos_acc_0.01": total_pos_acc_0_01 / total_samples,
         "total/rot_acc_0.025": total_rot_acc_0_025 / total_samples,
         "total/rot_acc_0.05": total_rot_acc_0_05 / total_samples,
+        "total/rot_ideal_acc_0.025": total_rot_ideal_acc_0_025 / total_samples,
+        "total/rot_ideal_acc_0.05": total_rot_ideal_acc_0_05 / total_samples,
     }
 
-    # Store per-task metrics
     for task_name, task_data in per_task_metrics.items():
-        count = max(task_data["count"], 1)  # Prevent division by zero
+        count = max(task_data["count"], 1)
         metrics[f"per_task/{task_name}_pos_l2_err"] = task_data["pos_l2_err_sum"] / count
         metrics[f"per_task/{task_name}_quat_l1_err"] = task_data["quat_l1_err_sum"] / count
+        metrics[f"per_task/{task_name}_quat_l1_ideal_err"] = task_data["quat_l1_ideal_err_sum"] / count
         metrics[f"per_task/{task_name}_pos_acc_0.01"] = task_data["pos_acc_0.01_sum"] / count
         metrics[f"per_task/{task_name}_rot_acc_0.025"] = task_data["rot_acc_0.025_sum"] / count
         metrics[f"per_task/{task_name}_rot_acc_0.05"] = task_data["rot_acc_0.05_sum"] / count
+        metrics[f"per_task/{task_name}_rot_ideal_acc_0.025"] = task_data["rot_ideal_acc_0.025_sum"] / count
+        metrics[f"per_task/{task_name}_rot_ideal_acc_0.05"] = task_data["rot_ideal_acc_0.05_sum"] / count
         metrics[f"per_task/{task_name}_open_acc"] = task_data["open_acc_sum"] / count
+        metrics[f"per_task/{task_name}_open_acc_ideal"] = task_data["open_ideal_acc_sum"] / count
 
     return metrics
+
 
 
 # Remove the build_args function and use Hydra for config loading.

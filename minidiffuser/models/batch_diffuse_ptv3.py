@@ -77,7 +77,7 @@ class ActionHead(nn.Module):
         input_size = hidden_size
         
         self.action_mlp = nn.Sequential(
-            nn.Linear(input_size, hidden_size),
+            nn.Linear(input_size + 3, hidden_size),
             nn.LeakyReLU(0.02),
             nn.Dropout(dropout),
             nn.Linear(hidden_size, output_size)
@@ -92,15 +92,14 @@ class ActionHead(nn.Module):
             nn.Linear(hidden_size, 3),
         )
         
-    def forward(
-        self, point_embeds, npoints_in_batch, coords=None, temp=1, 
-        gt_pos=None, dec_layers_embed=None, trans_input=None, noise_step=None,
+    def conditioned_rot(
+        self, point_embeds, npoints_in_batch, pos_condition
     ):
         '''
         Args:
             point_embeds: (# all points, dim)
             npoints_in_batch: (batch_size, )
-            coords: (# all points, 3)
+            pos_condition: (batch_size, 3)
         Return:
             pred_actions: (batch, num_steps, dim_actions)
         ''' 
@@ -110,27 +109,10 @@ class ActionHead(nn.Module):
         if self.reduce == 'max':
             split_point_embeds = torch.split(point_embeds, npoints_in_batch)
             pc_embeds = torch.stack([torch.max(x, 0)[0] for x in split_point_embeds], 0)
+            # print("pc_embeds_shape", pc_embeds.shape)
+            # print("pos_condition_shape", pos_condition.shape)
+            pc_embeds = torch.cat([pc_embeds, pos_condition], dim=-1)
             action_embeds = self.action_mlp(pc_embeds)
-        elif self.reduce.startswith('multiscale_max'):
-            pc_embeds = []
-            for dec_layer_embed in dec_layers_embed:
-                split_dec_embeds = torch.split(dec_layer_embed.feat, offset2bincount(dec_layer_embed.offset).data.cpu().numpy().tolist())
-                pc_embeds.append(
-                    F.normalize(torch.stack([torch.max(x, 0)[0] for x in split_dec_embeds], 0), p=2, dim=1)
-                )
-                # print(torch.stack([torch.max(x, 0)[0] for x in split_dec_embeds], 0).max(), torch.stack([torch.max(x, 0)[0] for x in split_dec_embeds], 0).min())
-            pc_embeds = torch.cat(pc_embeds, dim=1)
-            action_embeds = self.action_mlp(pc_embeds)
-        elif self.reduce == 'mean':
-            split_point_embeds = torch.split(point_embeds, npoints_in_batch)
-            pc_embeds = torch.stack([torch.mean(x, 0) for x in split_point_embeds], 0)
-            action_embeds = self.action_mlp(pc_embeds)
-        else: # attn
-            action_embeds = self.action_mlp(point_embeds)
-            action_heatmaps = torch.split(action_embeds[:, :1], npoints_in_batch)
-            action_heatmaps = [torch.softmax(x / temp, dim=0)for x in action_heatmaps]
-            split_action_embeds = torch.split(action_embeds[:, 1:], npoints_in_batch)
-            action_embeds = torch.stack([(h*v).sum(dim=0) for h, v in zip(action_heatmaps, split_action_embeds)], 0)
             
         if self.rot_pred_type == 'quat':
             xr = action_embeds[..., :4]
@@ -143,14 +125,6 @@ class ActionHead(nn.Module):
             xr = action_embeds[..., :self.euler_bins*3].view(-1, self.euler_bins, 3)
         else:
             raise NotImplementedError
-
-        noise_emb = self.noise_t_embedding(noise_step)
-
-        # print("pc_embeds_shape", pc_embeds.shape)
-        # print("trans_input_shape", trans_input.shape)
-        # print("noise_emb_shape", noise_emb.shape)
-
-        # xt = self.denoise_mlp(torch.cat([pc_embeds, trans_input, noise_emb], dim=-1))
 
         
         xo = action_embeds[..., -1]
@@ -343,6 +317,11 @@ class DiffPolicyPTV3(BaseModel):
         ptv3_batch = self.prepare_ptv3_batch(batch)
 
         anchor = self.prepare_noise_anchor(batch)
+        
+        
+        # add gussian noise 0.01
+        pos_condition = batch['gt_actions'][..., :3] + torch.randn(batch['gt_actions'][..., :3].shape, device=batch['gt_actions'].device) * 0.01
+        # in training, use noise gt_pose
 
         point_outs, anchor_outs = self.ptv3_model.forward_train(ptv3_batch, anchor, return_dec_layers=True)
 
@@ -353,56 +332,16 @@ class DiffPolicyPTV3(BaseModel):
         # predict posi from noise
         # predict rot and openness
 
-        pred_actions = self.act_proj_head.forward(
-            point_outs[-1].feat, batch['npoints_in_batch'], coords=point_outs[-1].coord,
-            temp=self.config.action_config.get('pos_heatmap_temp', 1),
-            gt_pos=batch['gt_actions'][..., :3] if 'gt_actions' in batch else None,
-            dec_layers_embed=None,
-            trans_input=batch["trans_input"],
-            noise_step=batch['noise_steps']
-        )
-          
-        pred_rot, pred_open = pred_actions
-
         pred_pos = self.act_proj_head.forward_diffuse(
             anchor_outs.feat
         )
+        
+        pred_rot, pred_open = self.act_proj_head.conditioned_rot(
+            point_outs[-1].feat, batch['npoints_in_batch'], pos_condition=pos_condition
+        )
+          
 
         action = pred_pos, pred_rot, pred_open
-        if self.config.action_config.pos_pred_type == 'heatmap_disc':
-            # TODO
-            # if not compute_loss:
-            if kwargs.get('compute_final_action', True):
-                # compute the real one as default behavior
-                # import time
-                # st = time.time()
-                cont_pred_pos = []
-                npoints_in_batch = offset2bincount(point_outs[-1].offset).data.cpu().numpy().tolist()
-                # [(3, npoints, pos_bins)]
-                split_pred_pos = torch.split(pred_pos, npoints_in_batch, dim=1)
-                split_coords = torch.split(point_outs[-1].coord, npoints_in_batch)
-                for i in range(len(npoints_in_batch)):
-                    disc_pos_prob = torch.softmax(
-                        split_pred_pos[i].reshape(3, -1), dim=-1
-                    )
-                    cont_pred_pos.append(
-                        get_best_pos_from_disc_pos(
-                            disc_pos_prob.data.cpu().numpy(), 
-                            split_coords[i].data.cpu().numpy(), 
-                            best=self.config.action_config.get('best_disc_pos', 'max'),
-                            topk=split_coords[i].size(1) * 10,
-                            pos_bin_size=self.config.action_config.pos_bin_size, 
-                            pos_bins=self.config.action_config.pos_bins, 
-                            # best='ens' , topk=1
-                        )
-                    )
-                cont_pred_pos = torch.from_numpy(np.array(cont_pred_pos)).float().to(device)
-                # print('time', time.time() - st)
-                pred_pos = cont_pred_pos
-                # print("using real predicted pos")
-            else:
-                # print('Warning: compute_final_action is False, but pos_pred_type is heatmap_disc using GT as place holder',)
-                pred_pos = batch['gt_actions'][..., :3]
 
         if self.config.action_config.rot_pred_type == 'rot6d':
             # no grad
@@ -435,7 +374,7 @@ class DiffPolicyPTV3(BaseModel):
             return final_pred_actions
 
     @torch.no_grad()
-    def forward_n_steps(self, batch: dict, compute_loss=False, **kwargs):
+    def forward_n_steps(self, batch: dict, compute_loss=False, is_dataset=False, **kwargs):
         '''batch data:
             pc_fts: (batch, npoints, dim)
             txt_embeds: (batch, txt_dim)
@@ -470,6 +409,9 @@ class DiffPolicyPTV3(BaseModel):
         device = batch['pc_fts'].device
 
         ptv3_batch = self.prepare_ptv3_batch(batch)
+        
+        if is_dataset:
+            gt_pos = batch['gt_actions'][:, :3]
 
         point_outs = self.ptv3_model.forward_inference(ptv3_batch, return_dec_layers=True)
 
@@ -520,17 +462,6 @@ class DiffPolicyPTV3(BaseModel):
 
         pred_pos, pred_rot, pred_open = None, None, None
 
-        pred_actions = self.act_proj_head.forward(
-            point_outs[-1].feat, batch['npoints_in_batch'], coords=point_outs[-1].coord,
-            temp=self.config.action_config.get('pos_heatmap_temp', 1),
-            gt_pos=batch['gt_actions'][..., :3] if 'gt_actions' in batch else None,
-            dec_layers_embed=None,
-            trans_input=batch["trans_input"],
-            noise_step=batch['noise_steps']
-        )
-          
-        pred_rot, pred_open = pred_actions
-
         for t in timesteps:
             noise_steps = t * torch.ones(len(init_anchor), device = init_anchor.device).long()
 
@@ -547,9 +478,12 @@ class DiffPolicyPTV3(BaseModel):
             outs['coord'] = self.position_noise_scheduler.step(pred_noise, t, outs['coord']).prev_sample
             outs['feat'] = outs['coord'].clone()
             
-        self.ptv3_model.clear_cache()
 
         pred_pos = outs['coord']
+        
+        pred_rot, pred_open = self.act_proj_head.conditioned_rot(
+            point_outs[-1].feat, batch['npoints_in_batch'], pos_condition=pred_pos
+        )
 
         if self.config.action_config.rot_pred_type == 'rot6d':
             # no grad
@@ -568,7 +502,40 @@ class DiffPolicyPTV3(BaseModel):
             pred_rot = torch.argmax(pred_rot, 1).data.cpu().numpy()
             pred_rot = np.stack([discrete_euler_to_quaternion(x, self.act_proj_head.euler_resolution) for x in pred_rot], 0)
             pred_rot = torch.from_numpy(pred_rot).to(device)
-        final_pred_actions = torch.cat([pred_pos, pred_rot, pred_open.unsqueeze(-1)], dim=-1)
+            
+        if is_dataset:
+            # pred rot from gt pos
+            rot_from_gt, open_from_gt = self.act_proj_head.conditioned_rot(
+            point_outs[-1].feat, batch['npoints_in_batch'], pos_condition=gt_pos
+        )
+            
+            if self.config.action_config.rot_pred_type == 'rot6d':
+                # no grad
+                rot_from_gt = self.rot_transform.matrix_to_quaternion(
+                    self.rot_transform.compute_rotation_matrix_from_ortho6d(rot_from_gt.data.cpu())
+                ).float().to(device)
+            elif self.config.action_config.rot_pred_type == 'euler':
+                rot_from_gt = rot_from_gt * 180
+                rot_from_gt = self.rot_transform.euler_to_quaternion(rot_from_gt.data.cpu()).float().to(device)
+            elif self.config.action_config.rot_pred_type == 'euler_delta':
+                rot_from_gt = rot_from_gt * 180
+                cur_euler_angles = R.from_quat(batch['ee_poses'][..., 3:7].data.cpu()).as_euler('xyz', degrees=True)
+                rot_from_gt = rot_from_gt.data.cpu() + cur_euler_angles
+                rot_from_gt = self.rot_transform.euler_to_quaternion(rot_from_gt).float().to(device)
+            elif self.config.action_config.rot_pred_type == 'euler_disc':
+                rot_from_gt = torch.argmax(rot_from_gt, 1).data.cpu().numpy()
+                rot_from_gt = np.stack([discrete_euler_to_quaternion(x, self.act_proj_head.euler_resolution) for x in rot_from_gt], 0)
+                rot_from_gt = torch.from_numpy(rot_from_gt).to(device)
+        
+        
+        
+        self.ptv3_model.clear_cache()
+        
+        if is_dataset:
+            final_pred_actions = torch.cat([pred_pos, pred_rot, pred_open.unsqueeze(-1), rot_from_gt, open_from_gt.unsqueeze(-1)], dim=-1)
+            
+        else:
+            final_pred_actions = torch.cat([pred_pos, pred_rot, pred_open.unsqueeze(-1)], dim=-1)
         
 
         return final_pred_actions

@@ -44,6 +44,6 @@ def calculate_task_statistics(file_path):
 
 
 
-# Example usage:
-file_path = "/home/huser/robot-3dlotus/experiments/disp/preds/seed2025/results.jsonl"  # Replace with your actual file path
-calculate_task_statistics(file_path)
+# # Example usage:
+# file_path = "/home/huser/robot-3dlotus/experiments/disp/preds/seed2025/results.jsonl"  # Replace with your actual file path
+# calculate_task_statistics(file_path)
