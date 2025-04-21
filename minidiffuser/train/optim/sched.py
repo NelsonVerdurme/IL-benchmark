@@ -89,6 +89,7 @@ def get_lr_sched(global_step, opts):
         func = warmup_inverse_sqrt
     elif opts.lr_sched == 'cosine':
         func = warmup_cosine
+        fn_args.append(opts.num_cosine_cycles if opts.num_cosine_cycles else 0.5)
     elif opts.lr_sched == 'cosine_cycle':
         func = warmup_cosine_hard_restarts
         fn_args.append(opts.num_cosine_cycles)
