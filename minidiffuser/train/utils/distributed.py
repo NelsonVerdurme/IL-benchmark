@@ -171,6 +171,8 @@ def set_cuda(opts) -> Tuple[bool, int, torch.device]:
     """
     local_rank = get_local_rank()
     opts.local_rank = local_rank
+    
+    print("local_rank: ", local_rank)
 
     if not torch.cuda.is_available():
         assert local_rank == -1, local_rank
@@ -187,7 +189,8 @@ def set_cuda(opts) -> Tuple[bool, int, torch.device]:
             LOGGER.info(f"Found {dist.get_world_size()} GPUs")
     else:
         default_gpu = True
-        device = torch.device("cuda")
+        device = torch.device("cuda", opts.cuda_device)
+        print(f"use device {device}")
         n_gpu = torch.cuda.device_count()
 
     return default_gpu, n_gpu, device
@@ -205,8 +208,10 @@ def wrap_model(
         )
         # At the time of DDP wrapping, parameters and buffers (i.e., model.state_dict()) 
         # on rank0 are broadcasted to all other ranks.
-    elif torch.cuda.device_count() > 1:
-        LOGGER.info("Using data parallel")
-        model = torch.nn.DataParallel(model)
+    
+    # a single card is enough for our model
+    # elif torch.cuda.device_count() > 1:
+    #     LOGGER.info("Using data parallel")
+    #     model = torch.nn.DataParallel(model)
 
     return model

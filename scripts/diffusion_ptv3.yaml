@@ -6,7 +6,7 @@ checkpoint_strict_load: False
 world_size: 1
 cuda_device: 0
 
-wandb_enable: True
+wandb_enable: False
 wandb_name: pt3-diff
 
 TRAIN:
@@ -16,8 +16,8 @@ TRAIN:
   freeze_params:
     encoder: False
     decoder: False
-  train_batch_size: 100
-  val_batch_size: 100
+  train_batch_size: 1
+  val_batch_size: 1
   val_batches: 10
   gradient_accumulation_steps: 1
   num_epochs: 1500
@@ -37,24 +37,24 @@ TRAIN:
   n_workers: 4
   pin_mem: True
   taskvars_filter: [
-    "close_jar",
-    "insert_onto_square_peg",
-    "light_bulb_in",
-    "meat_off_grill",
+    # "close_jar",
+    # "insert_onto_square_peg",
+    # "light_bulb_in",
+    # "meat_off_grill",
     "open_drawer",
-    "place_cups",
-    "place_shape_in_shape_sorter",
-    "place_wine_at_rack_location",
-    "push_buttons",
-    "put_groceries_in_cupboard",
-    "put_item_in_drawer",
-    "put_money_in_safe",
-    "reach_and_drag",
-    "slide_block_to_color_target",
-    "stack_blocks",
-    "stack_cups",
-    "sweep_to_dustpan_of_size",
-    "turn_tap"
+    # "place_cups",
+    # "place_shape_in_shape_sorter",
+    # "place_wine_at_rack_location",
+    # "push_buttons",
+    # "put_groceries_in_cupboard",
+    # "put_item_in_drawer",
+    # "put_money_in_safe",
+    # "reach_and_drag",
+    # "slide_block_to_color_target",
+    # "stack_blocks",
+    # "stack_cups",
+    # "sweep_to_dustpan_of_size",
+    # "turn_tap"
   ]
 
 TRAIN_DATASET:
@@ -62,19 +62,19 @@ TRAIN_DATASET:
   instr_embed_file: ${oc.env:HOME}/data/RLBench-18Task/train/keysteps_bbox_pcd/instr_embeds_clip.npy
   taskvar_instr_file: assets/taskvars_instructions_peract.json
   taskvar_file: assets/taskvars_peract.json
-  num_points: 4000
+  num_points: 15000
   xyz_shift: center
   xyz_norm: False
-  use_height: True
+  use_height: False
   sample_points_by_distance: False
   rot_type: euler_disc
   pos_type: disc
   instr_embed_type: all
   all_step_in_batch: False
   include_last_step: False
-  rm_table: True
-  rm_robot: box_keep_gripper
-  augment_pc: True
+  rm_table: False
+  rm_robot: none
+  augment_pc: False
   aug_max_rot: 45
   same_npoints_per_example: False
   rm_pc_outliers: False

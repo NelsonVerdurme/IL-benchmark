@@ -1,4 +1,15 @@
 import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
+
+
+# Define the custom colormap
+colors = [
+    "#1f77b4",  # default blue
+    "#00ff00",  # lighter blue
+    "#fce74a",  # yellow (plasma-like highlight)
+    "#ffae42",  # vivid orange
+]
+custom_cmap = LinearSegmentedColormap.from_list("custom_cmap", colors)
 
 # Data
 methods = [
@@ -11,7 +22,7 @@ memory_cost = [160, 64, 32, 128, 240, 128, 128, 128, 64, 16]   # in GB
 years = [2025, 2024, 2024, 2024, 2024, 2023, 2023, 2022, 2023, 2025]
 
 # Bubble sizes based on performance
-bubble_sizes = [(p - 35) * 50 for p in success_rate]
+bubble_sizes = [(p - 35) * 200 for p in success_rate]
 
 # Reference value: 3D Diffuser Actor success rate
 ref_idx = methods.index("3D Diffuser Actor")
@@ -37,8 +48,10 @@ offsets = [
 
 # Create plot
 plt.figure(figsize=(12, 7))
-scatter = plt.scatter(training_time, memory_cost, s=bubble_sizes, c=success_rate, cmap='plasma', alpha=0.75)
+# with custom color map
+scatter = plt.scatter(training_time, memory_cost, s=bubble_sizes, c=success_rate, cmap=custom_cmap, alpha=0.75)
 
+# scatter = plt.scatter(training_time, memory_cost, s=bubble_sizes, c=success_rate, cmap='plasma, alpha=0.75)
 # Log scale
 plt.xscale('log')
 plt.yscale('log')
@@ -46,7 +59,7 @@ plt.yscale('log')
 # Labels and title
 plt.xlabel('Training Time (log scale, V100 x 8 x day)', fontsize=14)
 plt.ylabel('Memory Cost (log scale, GB)', fontsize=14)
-plt.title('Training Efficiency vs Memory Cost vs Performance + Year', fontsize=16)
+# plt.title('Training Efficiency vs Memory Cost vs Performance + Year', fontsize=16)
 
 # Custom y-axis ticks
 plt.yticks([10, 20, 50, 100, 200, 300], labels=["10", "20", "50", "100", "200", "300"], fontsize=12)
@@ -60,6 +73,7 @@ for i in range(len(methods)):
 
 # Color bar
 plt.colorbar(scatter, label='Success Rate (%)')
+# customize color bar color 
 
 # Grid and layout
 plt.grid(True, which="both", linestyle="--", linewidth=0.5)
