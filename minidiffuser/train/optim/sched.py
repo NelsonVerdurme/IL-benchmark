@@ -90,6 +90,8 @@ def get_lr_sched(global_step, opts):
     elif opts.lr_sched == 'cosine':
         func = warmup_cosine
         fn_args.append(opts.num_cosine_cycles if opts.num_cosine_cycles else 0.5)
+        # print(f'using cosine lr schedule with {opts.num_cosine_cycles} cycles')
+        # print(f'trigger or not: {True if opts.num_cosine_cycles else False}')
     elif opts.lr_sched == 'cosine_cycle':
         func = warmup_cosine_hard_restarts
         fn_args.append(opts.num_cosine_cycles)
@@ -112,6 +114,9 @@ def get_lr_sched_decay_rate(global_step, opts):
         lr_decay_fn = warmup_inverse_sqrt
     elif opts.lr_sched == 'cosine':
         lr_decay_fn = warmup_cosine
+        fn_args.append(opts.num_cosine_cycles if opts.num_cosine_cycles else 0.5)
+        # print(f'using cosine lr schedule with {opts.num_cosine_cycles} cycles')
+        # print(f'trigger or not: {True if opts.num_cosine_cycles else False}')
     elif opts.lr_sched == 'cosine_cycle':
         lr_decay_fn = warmup_cosine_hard_restarts
         fn_args.append(opts.num_cosine_cycles)
