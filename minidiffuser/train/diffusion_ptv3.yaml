@@ -30,7 +30,7 @@ TRAIN:
   optim: 'adamw' # 'adamw'
   learning_rate: 2e-4
   lr_sched: 'cosine' # 'cosine'
-  num_cosine_cycles: null
+  num_cosine_cycles: 0.5 # null
   betas: [0.9, 0.98]
   weight_decay: 0.05
   grad_norm: 200 # only to avoid NaNs
