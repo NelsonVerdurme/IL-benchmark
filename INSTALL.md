@@ -44,7 +44,7 @@ pip install -e .
 # For headless RLBench evaluation
 x11 related lib
 ```
-sudo apt-get install xorg libxcb-randr0-dev libxrender-dev libxkbcommon-dev libxkbcommon-x11-0 libavcodec-dev libavformat-dev libswscale-dev
+sudo apt-get install xorg libxcb-randr0-dev libxrender-dev libxkbcommon-dev libxkbcommon-x11-0 libavcodec-dev libavformat-dev libswscale-dev apt-get install -y --no-install-recommends libgl1-mesa-dev xvfb dbus-x11 x11-utils libxkbcommon-x11-0
 ```
 
 ```bash
@@ -74,8 +74,8 @@ pip install -r requirements.txt
 pip install .
 cd ..
 
-# Our modified version of RLBench to support new tasks in GemBench
-git clone https://github.com/rjgpinel/RLBench
+# GemBench modified version of RLBench, fork to fix version.
+git clone https://github.com/utomm/RLBench.git
 cd RLBench
 pip install -r requirements.txt
 pip install .
