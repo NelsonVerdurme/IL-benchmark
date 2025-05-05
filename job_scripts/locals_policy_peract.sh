@@ -3,10 +3,10 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$COPPELIASIM_ROOT
 export QT_QPA_PLATFORM_PLUGIN_PATH=$COPPELIASIM_ROOT
 
 
-expr_dir=/home/huser/mini-diffuse-actor/experiments/midi-4090/00-01-18/data/experiments/minidi
+expr_dir=/home/huser/mini-diffuse-actor/experiments/minidiff
 ckpt_step=95200
 
-for seed in 0 1 2 3 2024 2025 2026
+for seed in 0 1 2
 do
 xvfb-run -a python minidiffuser/evaluation/eval_simple_policy_parrallel.py \
     --expr_dir ${expr_dir} --ckpt_step ${ckpt_step} --num_workers 6 \
