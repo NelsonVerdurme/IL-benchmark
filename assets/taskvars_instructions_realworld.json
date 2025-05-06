@@ -1,0 +1,74 @@
+{
+    "close_box": [
+        "close the lid of the box",
+        "put the lid back on the box",
+        "cover the box with its lid",
+        "seal the box by placing the lid on top"
+    ],
+    "open_drawer": [
+        "pull open the drawer",
+        "grip the handle and pull the drawer open",
+        "slide the drawer open",
+        "open the drawer by pulling on its handle"
+    ],
+    "put_grapes_in_bowl": [
+        "place the grapes in the bowl",
+        "move the grapes into the bowl",
+        "pick up the grapes and put them in the bowl",
+        "transfer the grapes from the table to the bowl"
+    ],
+    "insert_peg": [
+        "put the peg in the hole",
+        "insert the peg into its matching hole",
+        "place the peg into the corresponding slot",
+        "fit the peg into the appropriate opening"
+    ],
+    "put_mouse_on_pad": [
+        "place the computer mouse on the mousepad",
+        "move the mouse onto its pad",
+        "position the mouse on top of the mousepad",
+        "set the mouse down on the mousepad"
+    ],
+    "stack_blocks": [
+        "stack the blocks on top of each other",
+        "build a tower with the blocks",
+        "place one block on top of another block",
+        "create a vertical stack with the blocks"
+    ],
+    "stack_cup": [
+        "stack the cups together",
+        "place one cup inside the other cup",
+        "nest the cups together",
+        "put the smaller cup inside the larger cup"
+    ],
+    "fruits_in_box": [
+        "put the fruits in the box",
+        "place all the fruits inside the box",
+        "gather the fruits and put them in the box",
+        "transfer the fruits from the table into the box"
+    ],
+    "press_stapler": [
+        "press down on the stapler",
+        "use the stapler to staple the papers",
+        "push down on the stapler to connect the papers",
+        "staple the papers together by pressing the stapler"
+    ],
+    "sort_shape": [
+        "put the shape in its matching hole",
+        "sort the shape into the correct opening",
+        "place the shape into its corresponding slot",
+        "fit the shape into its proper place in the sorter"
+    ],
+    "lemon_in_bowl": [
+        "put the lemon in the bowl",
+        "place the lemon inside the bowl",
+        "move the lemon into the bowl",
+        "transfer the lemon from the table to the bowl"
+    ],
+    "close_drawer": [
+        "push the drawer closed",
+        "slide the drawer shut",
+        "close the drawer by pushing it in",
+        "push the open drawer back into its closed position"
+    ]
+}

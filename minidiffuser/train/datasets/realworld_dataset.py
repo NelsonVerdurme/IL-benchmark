@@ -28,7 +28,7 @@ from minidiffuser.train.datasets.diffusion_policy_dataset import base_collate_fn
 
 class RealworldDataset(Dataset):
     def __init__(
-            self, h5_data_path, instr_embed_file, taskvar_instr_file,
+            self, data_dir, instr_embed_file, taskvar_instr_file, taskvar_file,
             num_points=10000, xyz_shift='center', xyz_norm=True, use_height=False,
             rot_type='quat', instr_embed_type='last', all_step_in_batch=True, 
             rm_table=True, rm_robot='none', include_last_step=False, augment_pc=False,
@@ -36,7 +36,7 @@ class RealworldDataset(Dataset):
             rm_pc_outliers=False, rm_pc_outliers_neighbors=25, euler_resolution=5,
             pos_type='cont', pos_bins=50, pos_bin_size=0.01, 
             pos_heatmap_type='plain', pos_heatmap_no_robot=False,
-            aug_max_rot=45, real_robot=True, **kwargs
+            aug_max_rot=45, real_robot=True, h5_filename='episode_data.h5', **kwargs
         ):
 
         assert instr_embed_type in ['last', 'all']
@@ -48,38 +48,78 @@ class RealworldDataset(Dataset):
         # Join script folder for task instructions
         if kwargs.get('project_root', None):
             taskvar_instr_file = os.path.join(kwargs['project_root'], taskvar_instr_file)
+            taskvar_file = os.path.join(kwargs['project_root'], taskvar_file)
         else:
             taskvar_instr_file = os.path.join(os.path.dirname(__file__), taskvar_instr_file)
+            taskvar_file = os.path.join(os.path.dirname(__file__), taskvar_file)
         
         # Load instruction embeddings and task instructions
         self.taskvar_instrs = json.load(open(taskvar_instr_file))
         self.instr_embeds = np.load(instr_embed_file, allow_pickle=True).item()
         if instr_embed_type == 'last':
             self.instr_embeds = {instr: embeds[-1:] for instr, embeds in self.instr_embeds.items()}
-
-        # Load real-world dataset from HDF5 file
-        self.h5_file = h5py.File(h5_data_path, 'r')
-        self.episodes = list(self.h5_file['episodes'].keys())
         
-        # Create data IDs for all episodes and steps
-        self.data_ids = []
-        for ep_id in self.episodes:
-            episode = self.h5_file['episodes'][ep_id]
-            steps = sorted([k for k in episode.keys() if k.startswith('step_')], 
-                          key=lambda x: int(x.split('_')[1]))
+        # Load taskvars from JSON file
+        with open(taskvar_file, 'r') as f:
+            self.taskvars = json.load(f)
+        
+        self.data_dir = data_dir
+        self.h5_filename = h5_filename
+        
+        # Create data IDs for all episodes and steps across all taskvar subfolders
+        self.episode_info = []
+        
+        for taskvar in self.taskvars:
+            taskvar_dir = os.path.join(self.data_dir, taskvar)
+            if not os.path.exists(taskvar_dir):
+                print(f"Warning: Taskvar directory not found: {taskvar_dir}")
+                continue
+                
+            h5_path = os.path.join(taskvar_dir, self.h5_filename)
+            if not os.path.exists(h5_path):
+                print(f"Warning: H5 file not found for taskvar '{taskvar}' at {h5_path}")
+                continue
+                
+            try:
+                with h5py.File(h5_path, 'r') as h5f:
+                    episodes = list(h5f['episodes'].keys()) if 'episodes' in h5f else list(h5f.keys())
+                    
+                    for ep_id in episodes:
+                        episode = h5f['episodes'][ep_id] if 'episodes' in h5f else h5f[ep_id]
+                        steps = sorted([k for k in episode.keys() if k.startswith('step_')], 
+                                      key=lambda x: int(x.split('_')[1]))
+                        
+                        if all_step_in_batch:
+                            self.episode_info.append({
+                                'h5_path': h5_path,
+                                'ep_id': ep_id,
+                                'steps': steps,
+                                'taskvar': taskvar
+                            })
+                        else:
+                            if include_last_step:
+                                for step in steps:
+                                    self.episode_info.append({
+                                        'h5_path': h5_path,
+                                        'ep_id': ep_id,
+                                        'steps': [step],
+                                        'taskvar': taskvar
+                                    })
+                            else:
+                                for step in steps[:-1]:  # Exclude last step
+                                    self.episode_info.append({
+                                        'h5_path': h5_path,
+                                        'ep_id': ep_id,
+                                        'steps': [step],
+                                        'taskvar': taskvar
+                                    })
+            except Exception as e:
+                print(f"Error loading H5 file {h5_path}: {e}")
+        
+        if len(self.episode_info) == 0:
+            raise RuntimeError(f"No episodes found in {data_dir} with the provided taskvars")
             
-            if all_step_in_batch:
-                self.data_ids.append((ep_id, steps))
-            else:
-                if include_last_step:
-                    for step in steps:
-                        self.data_ids.append((ep_id, step))
-                else:
-                    for step in steps[:-1]:  # Exclude last step
-                        self.data_ids.append((ep_id, step))
-        
-        # If no taskvars specified, use a default one for real-world data
-        self.default_taskvar = list(self.taskvar_instrs.keys())[0] if self.taskvar_instrs else "pick_up_cup+0"
+        print(f"Loaded {len(self.episode_info)} episodes from {len(self.taskvars)} task variations")
         
         # Configuration parameters
         self.num_points = num_points
@@ -108,9 +148,18 @@ class RealworldDataset(Dataset):
         # Real robot workspace parameters
         self.TABLE_HEIGHT = get_robot_workspace(real_robot=real_robot)['TABLE_HEIGHT']
         self.rotation_transform = RotationMatrixTransform()
+        
+        # Cache for open H5 files
+        self.h5_cache = {}
 
     def __len__(self):
-        return len(self.data_ids)
+        return len(self.episode_info)
+    
+    def _get_h5_file(self, h5_path):
+        """Get H5 file from cache or open a new one"""
+        if h5_path not in self.h5_cache:
+            self.h5_cache[h5_path] = h5py.File(h5_path, 'r')
+        return self.h5_cache[h5_path]
     
     def _get_mask_with_robot_box(self, xyz, arm_links_info, rm_robot_type):
         if rm_robot_type == 'box_keep_gripper':
@@ -194,16 +243,14 @@ class RealworldDataset(Dataset):
         return gt_rots
 
     def __getitem__(self, idx):
-        if self.all_step_in_batch:
-            ep_id, steps = self.data_ids[idx]
-        else:
-            ep_id, step = self.data_ids[idx]
-            steps = [step]
-
-        # Select a task variation for instruction
-        taskvar = self.default_taskvar
-
-        episode = self.h5_file['episodes'][ep_id]
+        episode_data = self.episode_info[idx]
+        h5_path = episode_data['h5_path']
+        ep_id = episode_data['ep_id']
+        steps = episode_data['steps']
+        taskvar = episode_data['taskvar']
+        
+        h5f = self._get_h5_file(h5_path)
+        episode = h5f['episodes'][ep_id] if 'episodes' in h5f else h5f[ep_id]
         
         outs = {
             'data_ids': [], 'pc_fts': [], 'step_ids': [],
@@ -224,6 +271,30 @@ class RealworldDataset(Dataset):
         
         all_gripper_poses = np.array(all_gripper_poses)
         gt_rots = self.get_groundtruth_rotations(all_gripper_poses[:, 3:7])
+        
+        # Randomly select instruction for this task
+        if taskvar in self.taskvar_instrs:
+            instr = random.choice(self.taskvar_instrs[taskvar])
+            instr_embed_key = (taskvar, instr)
+            
+            # Look for the instruction embedding
+            if instr_embed_key in self.instr_embeds:
+                instr_embed = self.instr_embeds[instr_embed_key]
+            else:
+                # Try backup lookup approaches
+                alt_key = instr  # Try just the instruction text as key
+                if alt_key in self.instr_embeds:
+                    instr_embed = self.instr_embeds[alt_key]
+                else:
+                    print(f"Warning: Could not find embedding for '{instr_embed_key}', using zeros")
+                    # Get embedding size from first available embedding
+                    embed_size = next(iter(self.instr_embeds.values())).shape[-1]
+                    instr_embed = np.zeros((1, embed_size))
+        else:
+            print(f"Warning: No instructions found for taskvar '{taskvar}'")
+            # Get embedding size from first available embedding
+            embed_size = next(iter(self.instr_embeds.values())).shape[-1]
+            instr_embed = np.zeros((1, embed_size))
             
         for step_id in steps:
             t = int(step_id.split('_')[1]) if isinstance(step_id, str) else int(step_id)
@@ -260,10 +331,6 @@ class RealworldDataset(Dataset):
                 gt_action = copy.deepcopy(all_gripper_poses[t])
             
             gt_rot = gt_rots[t]
-
-            # Randomly select one instruction
-            instr = random.choice(self.taskvar_instrs[taskvar])
-            instr_embed = self.instr_embeds[instr]
 
             # Remove background points (table, robot arm)
             if self.rm_table:
@@ -359,7 +426,7 @@ class RealworldDataset(Dataset):
                 )
                 outs['disc_pos_probs'].append(torch.from_numpy(disc_pos_prob))
             
-            outs['data_ids'].append(f'{ep_id}-{step_id}-t{t}')
+            outs['data_ids'].append(f'{taskvar}/{ep_id}-{step_id}-t{t}')
             outs['pc_fts'].append(torch.from_numpy(pc_ft).float())
             outs['txt_embeds'].append(torch.from_numpy(instr_embed).float())
             outs['ee_poses'].append(torch.from_numpy(ee_pose).float())
@@ -370,9 +437,10 @@ class RealworldDataset(Dataset):
         return outs
     
     def close(self):
-        """Close the HDF5 file"""
-        if hasattr(self, 'h5_file'):
-            self.h5_file.close()
+        """Close all open H5 files"""
+        for h5f in self.h5_cache.values():
+            h5f.close()
+        self.h5_cache.clear()
             
     def __del__(self):
         self.close()
@@ -382,9 +450,11 @@ if __name__ == '__main__':
     import argparse
     
     parser = argparse.ArgumentParser()
-    parser.add_argument('--h5_file', type=str, default='realworld_dataset/dataset.h5')
-    parser.add_argument('--instr_embed_file', type=str, default='data/gembench/train_dataset/keysteps_bbox_pcd/instr_embeds_clip.npy')
-    parser.add_argument('--taskvar_instr_file', type=str, default='assets/taskvars_instructions_new.json')
+    parser.add_argument('--data_dir', type=str, default='/home/huser/mini-diffuse-actor/realworld_dataset')
+    parser.add_argument('--instr_embed_file', type=str, default='/home/huser/mini-diffuse-actor/realworld_dataset/instr_embeds_clip.npy')
+    parser.add_argument('--taskvar_instr_file', type=str, default='/home/huser/mini-diffuse-actor/assets/taskvars_instructions_realworld.json')
+    parser.add_argument('--taskvar_file', type=str, default='/home/huser/mini-diffuse-actor/assets/taskvars_realworld.json')
+    parser.add_argument('--h5_filename', type=str, default='episode_data.h5')
     args = parser.parse_args()
     
     # Set random seeds for reproducibility
@@ -396,14 +466,16 @@ if __name__ == '__main__':
     
     # Create dataset
     dataset = RealworldDataset(
-        h5_data_path=args.h5_file,
+        data_dir=args.data_dir,
         instr_embed_file=args.instr_embed_file,
         taskvar_instr_file=args.taskvar_instr_file,
+        taskvar_file=args.taskvar_file,
+        h5_filename=args.h5_filename,
         num_points=4096, xyz_norm=True, xyz_shift='center',
         use_height=False, rot_type='euler_delta', 
         instr_embed_type='last', include_last_step=True,
         rm_robot='box_keep_gripper', rm_table=True,
-        all_step_in_batch=True, same_npoints_per_example=False,
+        all_step_in_batch=False, same_npoints_per_example=False,
         sample_points_by_distance=True, augment_pc=False,
         rm_pc_outliers=True, real_robot=True
     )
@@ -411,7 +483,7 @@ if __name__ == '__main__':
     
     # Test dataloader
     dataloader = torch.utils.data.DataLoader(
-        dataset, batch_size=4, shuffle=True, num_workers=0, 
+        dataset, batch_size=4, shuffle=True, num_workers=2, 
         collate_fn=ptv3_collate_fn
     )
     print(f'Total batches: {len(dataloader)}')
