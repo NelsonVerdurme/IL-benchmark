@@ -201,6 +201,7 @@ class DiffPolicyPTV3(BaseModel):
             'feat': batch['pc_fts'],
         }
         device = batch['pc_fts'].device
+        # print("samples on device:", device)
 
         # encode context for each point cloud
         txt_embeds = self.txt_fc(batch['txt_embeds'])

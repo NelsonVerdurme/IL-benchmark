@@ -1,0 +1,166 @@
+SEED: 2024
+output_dir: data/experiments/minidi/
+tfboard_log_dir: data/TFBoard
+checkpoint: null
+checkpoint_strict_load: False
+world_size: 1
+cuda_device: 0
+
+wandb_enable: True
+wandb_name: pt3-diff
+
+TRAIN:
+  project_root: ${oc.env:HOME}/mini-diffuse-actor
+  resume_training: True
+  resume_encoder_only: False
+  freeze_params:
+    encoder: False
+    decoder: False
+  train_batch_size: 8
+  val_batch_size: 3
+  val_batches: 3
+  gradient_accumulation_steps: 1
+  num_epochs: 5000
+  num_train_steps: null
+  warmup_steps: 1000
+  log_steps: 500
+  bar_steps: 100
+  save_steps: 500
+  val_steps: 200 # 3000
+  optim: 'adamw' # 'adamw'
+  learning_rate: 2e-4
+  lr_sched: 'cosine' # 'cosine'
+  num_cosine_cycles: 0.5 # null
+  betas: [0.9, 0.98]
+  weight_decay: 0.05
+  grad_norm: 200 # only to avoid NaNs
+  n_workers: 4
+  pin_mem: True
+  taskvars_filter: [
+    "close_box"
+  ]
+
+TRAIN_DATASET:
+  data_dir: /home/huser/mini-diffuse-actor/realworld_dataset
+  instr_embed_file: /home/huser/mini-diffuse-actor/realworld_dataset/instr_embeds_clip.npy
+  taskvar_instr_file: assets/taskvars_instructions_realworld.json
+  taskvar_file: assets/taskvars_realworld.json
+  num_points: 4000
+  xyz_shift: center
+  xyz_norm: False
+  use_height: True
+  sample_points_by_distance: False
+  rot_type: euler_disc
+  pos_type: disc
+  instr_embed_type: all
+  all_step_in_batch: False
+  include_last_step: False
+  rm_table: True
+  rm_robot: none
+  augment_pc: True
+  aug_max_rot: 45
+  same_npoints_per_example: False
+  rm_pc_outliers: False
+  rm_pc_outliers_neighbors: 25
+  pos_bins: 15
+  pos_bin_size: 0.01
+  pos_heatmap_type: dist
+  pos_heatmap_no_robot: True
+  real_robot: True
+
+VAL_DATASET:
+  use_val: True
+  data_dir: /home/huser/mini-diffuse-actor/realworld_dataset
+  instr_embed_file: /home/huser/mini-diffuse-actor/realworld_dataset/instr_embeds_clip.npy
+  taskvar_instr_file: assets/taskvars_instructions_realworld.json
+  taskvar_file: assets/taskvars_realworld.json
+  num_points: 4000
+  xyz_shift: center
+  xyz_norm: False
+  use_height: True
+  sample_points_by_distance: False
+  rot_type: euler_disc
+  pos_type: disc
+  instr_embed_type: all
+  all_step_in_batch: False
+  include_last_step: False
+  rm_table: True
+  rm_robot: none
+  augment_pc: False
+  aug_max_rot: 0
+  same_npoints_per_example: False
+  rm_pc_outliers: False
+  rm_pc_outliers_neighbors: 25
+  pos_bins: 15
+  pos_bin_size: 0.01
+  pos_heatmap_type: dist
+  pos_heatmap_no_robot: True
+  real_robot: True
+  
+MODEL:
+  mini_batches: 100
+  diffusion:
+    total_timesteps: 50
+  model_class: DP
+  ptv3_config:
+    in_channels: 7
+    order: ["z", "z-trans", "hilbert", "hilbert-trans"]
+    stride: [2, 2, 2, 2]
+    enc_depths: [1, 1, 1, 1, 1]
+    enc_channels: [36, 72, 144, 192, 384]
+    enc_num_head: [2, 4, 8, 16, 32] 
+    enc_patch_size: [120, 120, 120, 120, 120]
+    dec_depths: [1, 1, 1, 1]
+    dec_channels: [72, 72, 144, 192]
+    dec_num_head: [4, 4 , 8, 16]
+    dec_patch_size: [120, 120, 120, 120]
+    mlp_ratio: 4
+    qkv_bias: True
+    qk_scale: null
+    qk_norm: True
+    scaled_cosine_attn: False
+    attn_drop: 0.1
+    proj_drop: 0.1
+    drop_path: 0.0
+    pre_norm: True
+    shuffle_orders: True
+    enable_rpe: False
+    enable_flash: True
+    upcast_attention: False
+    upcast_softmax: False
+    cls_mode: False
+    pdnorm_bn: False
+    pdnorm_ln: False
+    pdnorm_decouple: False
+    pdnorm_adaptive: False
+    pdnorm_affine: True
+    pdnorm_conditions: null
+    pdnorm_only_decoder: False
+    add_coords_in_attn: 'none'
+    local_conv: True
+    enable_rope: True
+  
+  action_config:
+    voxel_size: 0.01
+    context_channels: 256
+    txt_ft_size: 512
+    max_txt_len: 77
+    txt_reduce: attn
+    use_ee_pose: False
+    use_step_id: False
+    max_steps: 30
+    reduce: max
+    max_traj_len: 1
+    dim_actions: 7
+    pos_pred_type: diffuse # heatmap_disc
+    pos_heatmap_temp: 0.1
+    rot_pred_type: euler_disc
+    dropout: 0.2
+    pos_bins: 15
+    pos_bin_size: 0.01
+  loss_config:
+    pos_weight: 20
+    rot_weight: 1
+    pos_metric: l1 # l1 or l2
+
+

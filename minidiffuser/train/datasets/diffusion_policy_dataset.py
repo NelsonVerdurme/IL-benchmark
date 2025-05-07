@@ -271,6 +271,7 @@ class DPDataset(Dataset):
                     {k: v[t] for k, v in data['bbox_info'].items()}, 
                     {k: v[t] for k, v in data['pose_info'].items()}
                 )
+                # print(arm_links_info)
             
             if t < num_steps - 1:
                 gt_action = copy.deepcopy(data['action'][t+1])

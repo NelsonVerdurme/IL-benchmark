@@ -10,6 +10,8 @@ import torch
 from torch.utils.data import Dataset
 
 from sklearn.neighbors import LocalOutlierFactor
+# import open3d for visualization
+import open3d as o3d
 from scipy.spatial.transform import Rotation as R
 
 from minidiffuser.train.datasets.common import (
@@ -36,7 +38,7 @@ class RealworldDataset(Dataset):
             rm_pc_outliers=False, rm_pc_outliers_neighbors=25, euler_resolution=5,
             pos_type='cont', pos_bins=50, pos_bin_size=0.01, 
             pos_heatmap_type='plain', pos_heatmap_no_robot=False,
-            aug_max_rot=45, real_robot=True, h5_filename='episode_data.h5', **kwargs
+            aug_max_rot=45, real_robot=True, h5_filename='1cm.h5', **kwargs
         ):
 
         assert instr_embed_type in ['last', 'all']
@@ -262,12 +264,17 @@ class RealworldDataset(Dataset):
 
         # Prepare all step data for this episode
         all_gripper_poses = []
-        for step_id in sorted([k for k in episode.keys() if k.startswith('step_')], 
-                             key=lambda x: int(x.split('_')[1])):
+        for step_id in sorted([k for k in episode.keys() if k.startswith('step_')], key=lambda x: int(x.split('_')[1])):
             step = episode[step_id]
             gripper_pose = step['gripper'][...]
-            gripper_state = np.array([1.0])  # Default open gripper
-            all_gripper_poses.append(np.concatenate([gripper_pose, gripper_state]))
+            # if it is not 7+1 dim, add gripper state
+            if gripper_pose.shape[-1] == 7:
+                print(f"Warning: Gripper pose shape is {gripper_pose.shape}, adding gripper state")
+                gripper_state = np.array([1.0])  # Default open gripper
+                all_gripper_poses.append(np.concatenate([gripper_pose, gripper_state]))
+            else:
+                all_gripper_poses.append(gripper_pose)
+                
         
         all_gripper_poses = np.array(all_gripper_poses)
         gt_rots = self.get_groundtruth_rotations(all_gripper_poses[:, 3:7])
@@ -309,7 +316,12 @@ class RealworldDataset(Dataset):
             # Using a simplified structure compatible with RobotBox
             joint_states = step['joint_states'][...]
             gripper_pose = step['gripper'][...]
-            gripper_state = np.array([1.0])  # Default open gripper
+            # if it is not 7+1 dim, add gripper state
+            if gripper_pose.shape[-1] == 7:
+                gripper_state = np.array([1.0])
+                gripper_pose = np.concatenate([gripper_pose, gripper_state])
+            else:
+                gripper_pose = np.array(gripper_pose)
             
             # Simple bounding box info for robot arm
             # This is a placeholder - you'll need to adapt based on your robot model
@@ -322,7 +334,7 @@ class RealworldDataset(Dataset):
             })
             
             # Current end-effector pose
-            ee_pose = np.concatenate([gripper_pose, gripper_state])
+            ee_pose = gripper_pose
             
             # Target pose (next step or current if last step)
             if t < len(all_gripper_poses) - 1:
@@ -338,10 +350,11 @@ class RealworldDataset(Dataset):
                 xyz = xyz[mask]
                 rgb = rgb[mask]
                 
-            if self.rm_robot.startswith('box'):
-                mask = self._get_mask_with_robot_box(xyz, arm_links_info, self.rm_robot)
-                xyz = xyz[mask]
-                rgb = rgb[mask]
+            # dont remove robot arm for real robot data    
+            # if self.rm_robot.startswith('box'):
+            #     mask = self._get_mask_with_robot_box(xyz, arm_links_info, self.rm_robot)
+            #     xyz = xyz[mask]
+            #     rgb = rgb[mask]
 
             if self.rm_pc_outliers:
                 xyz, rgb = self._rm_pc_outliers(xyz, rgb)
@@ -446,6 +459,13 @@ class RealworldDataset(Dataset):
         self.close()
 
 
+def create_sphere_at_pos(pos, radius=0.02, color=[0,0,1]):
+    """Creates an Open3D sphere mesh at a given position."""
+    sphere = o3d.geometry.TriangleMesh.create_sphere(radius=radius)
+    sphere.paint_uniform_color(color)
+    sphere.translate(pos)
+    return sphere
+
 if __name__ == '__main__':
     import argparse
     
@@ -454,7 +474,8 @@ if __name__ == '__main__':
     parser.add_argument('--instr_embed_file', type=str, default='/home/huser/mini-diffuse-actor/realworld_dataset/instr_embeds_clip.npy')
     parser.add_argument('--taskvar_instr_file', type=str, default='/home/huser/mini-diffuse-actor/assets/taskvars_instructions_realworld.json')
     parser.add_argument('--taskvar_file', type=str, default='/home/huser/mini-diffuse-actor/assets/taskvars_realworld.json')
-    parser.add_argument('--h5_filename', type=str, default='episode_data.h5')
+    parser.add_argument('--h5_filename', type=str, default='1cm.h5')
+    parser.add_argument('--visualize_batch', action='store_true', help="Visualize a batch of data using Open3D")
     args = parser.parse_args()
     
     # Set random seeds for reproducibility
@@ -473,26 +494,81 @@ if __name__ == '__main__':
         h5_filename=args.h5_filename,
         num_points=4096, xyz_norm=True, xyz_shift='center',
         use_height=False, rot_type='euler_delta', 
-        instr_embed_type='last', include_last_step=True,
-        rm_robot='box_keep_gripper', rm_table=True,
-        all_step_in_batch=False, same_npoints_per_example=False,
+        instr_embed_type='last', include_last_step=False, # For single step processing
+        rm_robot="none", rm_table=True,
+        all_step_in_batch=False, # Process single steps per batch item
+        same_npoints_per_example=False,
         sample_points_by_distance=True, augment_pc=False,
         rm_pc_outliers=True, real_robot=True
     )
     print(f'Total data samples: {len(dataset)}')
     
     # Test dataloader
+    # Ensure batch_size is small if visualizing, e.g., 1 or 2, for clarity.
+    # If all_step_in_batch is True, batch_size=1 is recommended for visualization.
+    batch_size_for_loader = 1 if args.visualize_batch else 4
     dataloader = torch.utils.data.DataLoader(
-        dataset, batch_size=4, shuffle=True, num_workers=2, 
+        dataset, batch_size=batch_size_for_loader, shuffle=True, num_workers=0, # num_workers=0 for easier debugging with Open3D
         collate_fn=ptv3_collate_fn
     )
     print(f'Total batches: {len(dataloader)}')
     
     # Examine one batch
-    for batch in dataloader:
+    for i_batch, batch in enumerate(dataloader):
+        print(f"\n--- Batch {i_batch + 1} ---")
         for k, v in batch.items():
             if isinstance(v, torch.Tensor):
                 print(f'{k}: {v.size()}')
-        break
-    
+            elif isinstance(v, list) and len(v) > 0 and isinstance(v[0], str): # data_ids
+                 print(f'{k}: list of {len(v)} strings, e.g., {v[0]}')
+            else:
+                print(f'{k}: {type(v)}')
+
+        if args.visualize_batch:
+            print("\nVisualizing samples in the batch (close Open3D window to see the next sample)...")
+            
+            pc_fts_all = batch['pc_fts'].cpu().numpy()
+            pc_btch_offsets = batch['offset'].cpu().numpy()
+            
+            ee_poses_all = batch['ee_poses'].cpu().numpy()
+            gt_actions_all = batch['gt_actions'].cpu().numpy()
+            
+            data_ids = batch['data_ids']
+            print(f"Data IDs: {data_ids}")
+
+            num_samples_in_batch = ee_poses_all.shape[0]
+
+            for i in range(num_samples_in_batch):
+                end_idx = pc_btch_offsets[i]
+                start_idx = pc_btch_offsets[i-1] if i-1 >= 0 else 0
+                
+                print(start_idx, end_idx)
+                
+                sample_pc_fts = pc_fts_all[start_idx:end_idx]
+                print("Sample point cloud shape:", sample_pc_fts.shape)
+                sample_xyz_normalized = sample_pc_fts[:, :3]
+                sample_rgb_normalized = sample_pc_fts[:, 3:6] # Assuming RGB is next
+                
+                sample_ee_pose_pos_normalized = ee_poses_all[i, :3]
+                sample_gt_action_pos_normalized = gt_actions_all[i, :3]
+
+                print(f"\nVisualizing sample {i+1}/{num_samples_in_batch}, ID: {data_ids[i]} (Normalized Space)")
+                print(f"  EE Pose (normalized): {sample_ee_pose_pos_normalized}")
+                print(f"  GT Action Pos (normalized): {sample_gt_action_pos_normalized}")
+
+                pcd = o3d.geometry.PointCloud()
+                pcd.points = o3d.utility.Vector3dVector(sample_xyz_normalized)
+                pcd.colors = o3d.utility.Vector3dVector((sample_rgb_normalized + 1) / 2.0) # Convert RGB from [-1, 1] to [0, 1]
+                
+                ee_sphere = create_sphere_at_pos(sample_ee_pose_pos_normalized, radius=0.05, color=[0, 0, 1]) # Blue for EE
+                gt_sphere = create_sphere_at_pos(sample_gt_action_pos_normalized, radius=0.05, color=[0, 1, 0]) # Green for GT
+                
+                coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2, origin=[0,0,0])
+
+                o3d.visualization.draw_geometries([pcd, ee_sphere, gt_sphere, coord_frame], 
+                                                  window_name=f"Sample (Normalized): {data_ids[i]}")
+        
+        if i_batch >= 0: # Process only the first batch for this example
+            break 
+            
     dataset.close()

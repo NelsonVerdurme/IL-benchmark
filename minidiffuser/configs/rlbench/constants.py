@@ -1,5 +1,5 @@
 
-def get_robot_workspace(real_robot=False, use_vlm=False):
+def get_robot_workspace(real_robot=False, use_vlm=False, franka=True):
     if real_robot:  
         # ur5 robotics room
         if use_vlm:
@@ -7,6 +7,11 @@ def get_robot_workspace(real_robot=False, use_vlm=False):
             X_BBOX = (-0.60, 0.2)        # 0 is the robot base
             Y_BBOX = (-0.54, 0.54)  # 0 is the robot base
             Z_BBOX = (-0.02, 0.75)      # 0 is the table
+        elif franka:
+            TABLE_HEIGHT = -0.04
+            X_BBOX = (0.1, 0.9)
+            Y_BBOX = (-0.35, 0.5)
+            Z_BBOX = (-0.2, 0.7)
         else:
             TABLE_HEIGHT = 0.01 # meters
             X_BBOX = (-0.60, 0.2)        # 0 is the robot base
