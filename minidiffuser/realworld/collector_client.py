@@ -67,16 +67,10 @@ def visualize_xyzrgb_gripper(xyz, rgb, gripper_pose):
     frame.translate(pos_fixed)
 
 
-    # Gripper pose visualized as an axis
-    # add rotation from quaternion to the gripper frame
-    gripper_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1)
-    gripper_frame.rotate(o3d.geometry.get_rotation_matrix_from_quaternion(gripper_pose[3:7]), center=(0,0,0))
-    
-    gripper_frame.translate(gripper_pose[:3])
 
 
 
-    o3d.visualization.draw_geometries([pcd, gripper_frame, frame],)
+    o3d.visualization.draw_geometries([pcd, frame],)
     
 def send_response(sock, data):
     packed = msgpack.packb(data, default=msgpack_numpy.encode)

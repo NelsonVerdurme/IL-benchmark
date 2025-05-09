@@ -33,7 +33,7 @@ def load_episode_hdf5(hdf5_path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset_path', type=str, default='/home/huser/mini-diffuse-actor/realworld_dataset/dataset.h5', help="Path to the HDF5 dataset file")
+    parser.add_argument('--dataset_path', type=str, default='/home/huser/mini-diffuse-actor/realworld_dataset/close_box/dataset.h5', help="Path to the HDF5 dataset file")
     parser.add_argument('--host', type=str, default='127.0.0.1', help="Server IP")
     parser.add_argument('--port', type=int, default=5006, help="Server port")
     args = parser.parse_args()
