@@ -106,7 +106,7 @@ def visualize_pointcloud(xyz, rgb, gripper_pose=None, action_pose=None):
         # # Apply translation
         # gripper_frame.translate(gripper_pose[:3])
         
-        pos_fixed, rot_fixed = ros_to_open3d_transform(gripper_pose[:3], gripper_pose[3:])
+        pos_fixed, rot_fixed = ros_to_open3d_transform(gripper_pose[:3], gripper_pose[3:7])
 
         frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2)
         frame.paint_uniform_color([0, 1, 1])  # Red color for action frame
@@ -118,7 +118,7 @@ def visualize_pointcloud(xyz, rgb, gripper_pose=None, action_pose=None):
     # Add action pose if provided
     if action_pose is not None:
         assert len(action_pose) >= 7, "Action pose must contain at least 7 elements (x, y, z, qx, qy, qz, qw)"
-        action_pos_fixed, action_rot_fixed = ros_to_open3d_transform(action_pose[:3], action_pose[3:])
+        action_pos_fixed, action_rot_fixed = ros_to_open3d_transform(action_pose[:3], action_pose[3:7])
         action_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2)
         # color
         action_frame.paint_uniform_color([1, 1, 0])  # Red color for action frame
@@ -290,9 +290,9 @@ class RealworldEnv:
                 # Visualize if requested
                 if visualize:
                     visualize_pointcloud(
-                        obs['xyz'], 
-                        obs['rgb'], 
-                        obs['gripper']
+                        processed_obs['pc'], 
+                        processed_obs['rgb'], 
+                        processed_obs['gripper']
                     )
                 
                 # Increment step counter
@@ -321,11 +321,17 @@ class RealworldEnv:
         processed_obs = obs.copy()
         
         # Check if point cloud data exists
-        if 'xyz' not in obs:
+        if 'pc' not in obs:
             return processed_obs
         
-        xyz = obs['xyz']
+        xyz = obs['pc']
         rgb = obs.get('rgb', None)
+        
+        xyz = np.array(xyz).reshape(-1, 3)
+        if rgb is not None:
+            rgb = np.array(rgb).reshape(-1, 3)
+        
+        print(f"[RealworldEnv] Original point cloud size: {xyz.shape[0]}")
         
         # Define workspace bounding box (can be made configurable via class attributes)
         bbox_min = np.array([0.1, -0.35, -0.2])  # [xmin, ymin, zmin]
@@ -343,6 +349,8 @@ class RealworldEnv:
         else:
             filtered_xyz = xyz
             filtered_rgb = rgb
+            
+        print(f"[RealworldEnv] Filtered point cloud size: {filtered_xyz.shape[0]}")
         
         # Downsample point cloud using voxel grid
         if filtered_xyz.shape[0] > 0:
@@ -370,9 +378,11 @@ class RealworldEnv:
             down_rgb = filtered_rgb
         
         # Update observation with processed point cloud
-        processed_obs['xyz'] = down_xyz
+        processed_obs['pc'] = down_xyz
         if down_rgb is not None:
             processed_obs['rgb'] = down_rgb
+            
+        print(f"[RealworldEnv] Downsampled point cloud size: {processed_obs['pc'].shape[0]}")
             
         # Process gripper data if available
         if 'gripper' in obs and 'joint_states' in obs:

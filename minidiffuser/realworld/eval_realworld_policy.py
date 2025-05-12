@@ -22,7 +22,7 @@ from minidiffuser.train.utils.misc import set_random_seed
 from minidiffuser.configs.default import get_config
 from omegaconf import OmegaConf
 
-from minidiffuser.train.train_diffusion_policy import MODEL_FACTORY
+from minidiffuser.train.train_diffusion_realworld import MODEL_FACTORY
 from minidiffuser.configs.rlbench.constants import get_robot_workspace
 from minidiffuser.utils.robot_box import RobotBox
 from minidiffuser.train.datasets.common import gen_seq_masks
@@ -31,7 +31,7 @@ from minidiffuser.evaluation.eval_simple_policy import Actioner
 from minidiffuser.realworld.realworld_env import RealworldEnv, visualize_pointcloud 
 
 class RealworldArguments(tap.Tap):
-    exp_config: str = "/home/huser/mini-diffuse-actor/experiments/logs/training_config.yaml"
+    exp_config: str = "/home/huser/mini-diffuse-actor/experiments/logs/mini_close/logs/training_config.yaml"
     device: str = 'cuda'  # cpu, cuda
 
     seed: int = 100  # seed for reproducibility
@@ -40,7 +40,7 @@ class RealworldArguments(tap.Tap):
 
     # Real-world specific arguments
     collector_host: str = '127.0.0.1'
-    collector_port: int = 5005
+    collector_port: int = 5007
     executer_host: str = '127.0.0.1'
     executer_port: int = 5006
     
@@ -51,8 +51,6 @@ class RealworldArguments(tap.Tap):
 class RealworldActioner(object):
     def __init__(self, args) -> None:
         self.args = args
-        if self.args.save_obs_outs_dir is not None:
-            os.makedirs(self.args.save_obs_outs_dir, exist_ok=True)
 
         self.WORKSPACE = get_robot_workspace(real_robot=True)
         self.device = torch.device(args.device)
@@ -62,6 +60,8 @@ class RealworldActioner(object):
 
         if args.checkpoint is not None:
             config.checkpoint = args.checkpoint
+            
+        print(config)
 
         model_class = MODEL_FACTORY[config.MODEL.model_class]
         self.model = model_class(config.MODEL)
@@ -178,6 +178,14 @@ class RealworldActioner(object):
                 
         xyz = xyz[point_idxs]
         rgb = rgb[point_idxs]
+        
+        # # visualize point cloud
+        # pcd = o3d.geometry.PointCloud()
+        # pcd.points = o3d.utility.Vector3dVector(xyz)
+        # pcd.colors = o3d.utility.Vector3dVector(rgb)
+        # pcd.paint_uniform_color([0.5, 0.5, 0.5])
+        # o3d.visualization.draw_geometries([pcd])
+        
         height = xyz[:, -1] - self.TABLE_HEIGHT
 
         # normalize - match the dataset normalization approach
@@ -325,10 +333,19 @@ def main():
     # Run the evaluation
     try:
         with torch.no_grad():
-            obs = env.reset()
+            obs = env.reset(visualize=True)
             step_id = 0
             while True:
                 # Reset the environment
+                
+                # print observation dictionary elements shapes
+                for k, v in obs.items():
+                    if isinstance(v, list):
+                        print(f"{k}: {len(v)}")
+                    elif isinstance(v, np.ndarray):
+                        print(f"{k}: {v.shape}")
+                    else:
+                        print(f"{k}: {v}")
 
 
                 output = actioner.predict(
@@ -345,14 +362,14 @@ def main():
                 print(f"Step {step_id}: Visualizing predicted action before execution...")
                 
                 visualize_pointcloud(
-                    obs['pc'][0],  # point cloud (N, 3)
-                    obs['rgb'][0],  # RGB (N, 3)
-                    gripper_pose=obs['gripper'][0],  # gripper pose (N, 8)
+                    obs['pc'],  # point cloud (N, 3)
+                    obs['rgb'],  # RGB (N, 3)
+                    gripper_pose=obs['gripper'],  # gripper pose (N, 8)
                     action_pose=action,  # predicted gripper pose (position + quaternion)
                 )
                 input("Press Enter to execute this action, or Ctrl+C to abort...")
                 
-                next_obs, reward, done, info = env.step(action)
+                next_obs, reward, done, info = env.step(action, visualize=True)
                 obs = next_obs
 
     
