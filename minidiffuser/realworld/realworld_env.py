@@ -272,6 +272,8 @@ class RealworldEnv:
                     'arm_links_info': obs.get('arm_links_info', None),
                 }
                 
+                processed_obs = self.preprocess_observation(processed_obs)
+                
                 # Visualize if requested
                 if visualize:
                     visualize_pointcloud(
@@ -291,6 +293,85 @@ class RealworldEnv:
             print(f"[RealworldEnv] Error getting observation: {e}")
             traceback.print_exc()
             return None
+        
+    def preprocess_observation(self, obs: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Preprocesses the observation by filtering and downsampling point cloud data.
+        
+        Args:
+            obs: Dictionary containing observation data including 'xyz' and optionally 'rgb'.
+            
+        Returns:
+            Processed observation dictionary.
+        """
+        # Make a copy of observation to avoid modifying the original
+        processed_obs = obs.copy()
+        
+        # Check if point cloud data exists
+        if 'xyz' not in obs:
+            return processed_obs
+        
+        xyz = obs['xyz']
+        rgb = obs.get('rgb', None)
+        
+        # Define workspace bounding box (can be made configurable via class attributes)
+        bbox_min = np.array([0.1, -0.35, -0.2])  # [xmin, ymin, zmin]
+        bbox_max = np.array([0.9, 0.5, 0.7])     # [xmax, ymax, zmax]
+        
+        # Filter points by bounding box
+        if xyz.shape[0] > 0:
+            mask = (
+                (xyz[:, 0] >= bbox_min[0]) & (xyz[:, 0] <= bbox_max[0]) &
+                (xyz[:, 1] >= bbox_min[1]) & (xyz[:, 1] <= bbox_max[1]) &
+                (xyz[:, 2] >= bbox_min[2]) & (xyz[:, 2] <= bbox_max[2])
+            )
+            filtered_xyz = xyz[mask]
+            filtered_rgb = rgb[mask] if rgb is not None and rgb.shape[0] > 0 else None
+        else:
+            filtered_xyz = xyz
+            filtered_rgb = rgb
+        
+        # Downsample point cloud using voxel grid
+        if filtered_xyz.shape[0] > 0:
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(filtered_xyz)
+            
+            if filtered_rgb is not None and filtered_rgb.shape[0] > 0:
+                # Normalize RGB values if needed
+                if filtered_rgb.max() > 1.0 and filtered_rgb.max() <= 255.0:
+                    rgb_normalized = filtered_rgb / 255.0
+                else:
+                    rgb_normalized = filtered_rgb
+                pcd.colors = o3d.utility.Vector3dVector(rgb_normalized)
+            
+            # Perform voxel downsampling
+            voxel_size = 0.01  # 1cm voxel size (can be made configurable)
+            down_pcd = pcd.voxel_down_sample(voxel_size)
+            
+            down_xyz = np.asarray(down_pcd.points)
+            down_rgb = None
+            if down_pcd.has_colors():
+                down_rgb = np.asarray(down_pcd.colors)
+        else:
+            down_xyz = filtered_xyz
+            down_rgb = filtered_rgb
+        
+        # Update observation with processed point cloud
+        processed_obs['xyz'] = down_xyz
+        if down_rgb is not None:
+            processed_obs['rgb'] = down_rgb
+            
+        # Process gripper data if available
+        if 'gripper' in obs and 'joint_states' in obs:
+            gripper_original = obs['gripper']
+            joint_states = obs['joint_states']
+            
+            if gripper_original.shape == (7,) and joint_states.ndim == 1 and joint_states.size > 0:
+                # Add 8th value based on joint_states (gripper open/close state)
+                gripper_8th_val = 1.0 if joint_states[-1] > 0.03 else 0.0
+                processed_obs['gripper'] = np.concatenate((gripper_original, [gripper_8th_val]))
+        
+        return processed_obs
     
     def send_action(self, action: np.ndarray) -> bool:
         """
