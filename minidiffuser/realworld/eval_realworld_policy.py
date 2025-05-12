@@ -28,15 +28,15 @@ from minidiffuser.utils.robot_box import RobotBox
 from minidiffuser.train.datasets.common import gen_seq_masks
 from minidiffuser.evaluation.common import write_to_file
 from minidiffuser.evaluation.eval_simple_policy import Actioner
-from minidiffuser.realworld.realworld_env import RealworldEnv
+from minidiffuser.realworld.realworld_env import RealworldEnv, visualize_pointcloud 
 
 class RealworldArguments(tap.Tap):
-    exp_config: str
+    exp_config: str = "/home/huser/mini-diffuse-actor/experiments/logs/training_config.yaml"
     device: str = 'cuda'  # cpu, cuda
 
     seed: int = 100  # seed for reproducibility
     taskvar: str = 'close_box'  # task+variation
-    checkpoint: str = None
+    checkpoint: str = "/home/huser/mini-diffuse-actor/experiments/logs/mini_close/ckpts/model_step_100000.pt"
 
     # Real-world specific arguments
     collector_host: str = '127.0.0.1'
@@ -268,8 +268,7 @@ class RealworldActioner(object):
         return batch
 
     def predict(
-        self, task_str=None, step_id=None, obs_state_dict=None, 
-        episode_id=None, instructions=None,
+        self, task_str=None, step_id=None, obs_state_dict=None
     ):
         taskvar = task_str
         batch = self.preprocess_obs(
@@ -327,28 +326,35 @@ def main():
     try:
         with torch.no_grad():
             obs = env.reset()
+            step_id = 0
             while True:
                 # Reset the environment
 
-                demo_id = obs['demo_id']
-                step_id = 0
-                instructions = actioner.taskvar_instrs[task_str]
-
-
-                obs_state_dict = self.get_observation(obs)  # type: ignore
-
 
                 output = actioner.predict(
-                        task_str=task_str
-                        step_id=step_id, obs_state_dict=obs_state_dict, 
-                        episode_id=demo_id, instructions=instructions
-                    )
+                        task_str=task_str,
+                        step_id=step_id, obs_state_dict=obs)
                 action = output["action"]
                 step_id += 1
-
+                
+                
                 if action is None:
                     print("No action predicted, some error happened!")
                     break
+                
+                print(f"Step {step_id}: Visualizing predicted action before execution...")
+                
+                visualize_pointcloud(
+                    obs['pc'][0],  # point cloud (N, 3)
+                    obs['rgb'][0],  # RGB (N, 3)
+                    gripper_pose=obs['gripper'][0],  # gripper pose (N, 8)
+                    action_pose=action,  # predicted gripper pose (position + quaternion)
+                )
+                input("Press Enter to execute this action, or Ctrl+C to abort...")
+                
+                next_obs, reward, done, info = env.step(action)
+                obs = next_obs
+
     
         
         

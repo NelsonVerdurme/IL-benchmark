@@ -71,7 +71,7 @@ def load_episode_hdf5(hdf5_path):
 
         return gripper_poses
 
-def visualize_pointcloud(xyz, rgb, gripper_pose=None):
+def visualize_pointcloud(xyz, rgb, gripper_pose=None, action_pose=None):
     """Visualize the point cloud and gripper pose using Open3D."""
     if xyz.shape[0] == 0:
         print("[RealworldEnv] Warning: Empty point cloud!")
@@ -92,26 +92,39 @@ def visualize_pointcloud(xyz, rgb, gripper_pose=None):
     
     # Add gripper pose if provided
     if gripper_pose is not None:
-        # Create coordinate frame for the gripper
-        gripper_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1)
+        assert len(gripper_pose) >= 7, "Gripper pose must contain at least 7 elements (x, y, z, qx, qy, qz, qw)"
+        # # Create coordinate frame for the gripper
+        # gripper_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1,)
         
-        # Apply rotation from quaternion
-        if len(gripper_pose) >= 7:  # Check if we have quaternion data
-            gripper_frame.rotate(
-                o3d.geometry.get_rotation_matrix_from_quaternion(gripper_pose[3:7]),
-                center=(0, 0, 0)
-            )
+        # # Apply rotation from quaternion
+        # if len(gripper_pose) >= 7:  # Check if we have quaternion data
+        #     gripper_frame.rotate(
+        #         o3d.geometry.get_rotation_matrix_from_quaternion(gripper_pose[3:7]),
+        #         center=(0, 0, 0)
+        #     )
         
-        # Apply translation
-        gripper_frame.translate(gripper_pose[:3])
+        # # Apply translation
+        # gripper_frame.translate(gripper_pose[:3])
         
         pos_fixed, rot_fixed = ros_to_open3d_transform(gripper_pose[:3], gripper_pose[3:])
 
         frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2)
+        frame.paint_uniform_color([0, 1, 1])  # Red color for action frame
         frame.rotate(rot_fixed, center=(0, 0, 0))
         frame.translate(pos_fixed)
-        geometries.append(gripper_frame)
+        # geometries.append(gripper_frame)
         geometries.append(frame)
+        
+    # Add action pose if provided
+    if action_pose is not None:
+        assert len(action_pose) >= 7, "Action pose must contain at least 7 elements (x, y, z, qx, qy, qz, qw)"
+        action_pos_fixed, action_rot_fixed = ros_to_open3d_transform(action_pose[:3], action_pose[3:])
+        action_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2)
+        # color
+        action_frame.paint_uniform_color([1, 1, 0])  # Red color for action frame
+        action_frame.rotate(action_rot_fixed, center=(0, 0, 0))
+        action_frame.translate(action_pos_fixed)
+        geometries.append(action_frame)
     
     # Visualize
     o3d.visualization.draw_geometries(geometries)
@@ -373,7 +386,7 @@ class RealworldEnv:
         
         return processed_obs
     
-    def send_action(self, action: np.ndarray) -> bool:
+    def send_action(self, action: np.ndarray, reset: bool = False) -> bool:
         """
         Send an action to the executer server.
         
@@ -387,7 +400,13 @@ class RealworldEnv:
             raise ConnectionError("Not connected to servers")
         
         try:
-            msg = {'gripper': action}
+            if reset:
+                msg = {'reset': True}
+                socket_send(self.executer_sock, msg)
+                print("[RealworldEnv] Sent reset command to executer server.")
+                return True
+            # Ensure action is a 1D array
+            msg = {'gripper': action, 'reset': False}
             socket_send(self.executer_sock, msg)
             print(f"[RealworldEnv] Sent action: {action}")
             
@@ -429,8 +448,13 @@ class RealworldEnv:
         self.episode_counter += 1
         print(f"[RealworldEnv] Starting episode {self.episode_counter}")
         
+        self.send_action(np.zeros(7), reset=True)  # Send reset command to executer server
+
+        
         # Get initial observation
         print("[RealworldEnv] Resetting environment by [doing nothing]...")
+        
+        return self.get_observation(visualize=visualize)
     
     def step(self, action: np.ndarray, visualize=False) -> Tuple[Dict[str, Any], float, bool, Dict]:
         """
