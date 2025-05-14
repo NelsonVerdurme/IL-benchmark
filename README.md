@@ -1,70 +1,73 @@
 # Mini-Diffuse-Actor
 
+![image](https://github.com/user-attachments/assets/433c8532-4eb2-49f7-8424-58a9cb29de23)
+
 ## Highlights
 
-- Achieves **95%** of the performance of [3D-Diffuser-Actor](https://github.com/nickgkan/3d_diffuser_actor) on the RLBench-18 multi-task benchmark, with just **13 hours** of training on a single RTX 4090 GPU, or **1 Day** on an A100. Check our [**Wandb Reports**](https://api.wandb.ai/links/hu2240877635/4r8wa4rt).
+- Achieves **95%** of the performance of [3D-Diffuser-Actor](https://github.com/nickgkan/3d_diffuser_actor) on the RLBench-18 multi-task benchmark, with just **13 hours** of training on a single RTX 4090 GPU, or **1 day** on an A100. Check our [**Wandb Reports**](https://api.wandb.ai/links/hu2240877635/4r8wa4rt).
+- Complete codebase for RLBench training and headless testing, as well as real-world training and evaluation.
+- Includes checkpoints, training logs, and test logs.
+- Training and testing can be run on cloud platforms. For example, on Vast.ai it costs less than **$5** to train your own Mini-Diffuser.
 
-
-
-- Codebase for RLbench training and headless test. As well as real world training and testing. 
-
-- Checkpoints, training logs and test logs fully available. 
-
-- Training and test also run-able on Cloud platforms. E.g. on Vast.ai, you only needs \< $5 to train your own mini-diffuser.
-
-This code space builds upon [3D-LUTOS](https://github.com/vlc-robot/robot-3dlotus/) — many thanks to the original authors for open-sourcing their container and providing a robust headless training-evaluation-testing pipeline. The idea emerged from comparing [Act3D](https://github.com/nickgkan/3d_diffuser_actor) and [3D diffuser Actor](https://github.com/zhouxian/act3d-chained-diffuser).
+This codebase builds upon [3D-LUTOS](https://github.com/vlc-robot/robot-3dlotus/) — many thanks to the original authors for open-sourcing their container and providing a robust headless training-evaluation-testing pipeline. The idea was inspired by comparing [3D-Diffuser-Actor](https://github.com/nickgkan/3d_diffuser_actor) and [Act3D](https://github.com/zhouxian/act3d-chained-diffuser).
 
 🚧 Project in progress
 
 ## Installation
 
-Check [INSTALL.md](), for training-only usage, you don't need to install the simulator.
+See [INSTALL.md](https://github.com/utomm/mini-diffuse-actor/blob/master/INSTALL.md).  
+For training-only usage, you don’t need to install the simulator.
 
 ## Training
+
+Run:
 
 ```
 python train/train_diffusion_policy.py
 ```
 
-for result reproduce, make sure the args aligns with the [wandb logs](https://api.wandb.ai/links/hu2240877635/4r8wa4rt). E.g.
+To reproduce results, ensure arguments match those used in the [wandb logs](https://api.wandb.ai/links/hu2240877635/4r8wa4rt). Example:
 
 ```
 python train/train_diffusion_policy.py MODEL.mini_batches=256 TRAIN.learning_rate=3e-4 wandb_name=rlbench18_256 TRAIN_DATASET.num_points=4000 VAL_DATASET.num_points=4000 MODEL.diffusion.total_timesteps=100 TRAIN.num_epochs=800 SEED=2024 TRAIN.lr_sched=cosine TRAIN.num_cosine_cycles=0.6
 ```
 
-
 ## Testing
 
-you can test your own model or download pretrained checkpoints [Here](https://huggingface.co/datasets/you2who/minidiffuser/tree/main).
+You can test your own model or download pretrained checkpoints [here](https://huggingface.co/datasets/you2who/minidiffuser/tree/main).
 
-make sure the RLBench simulator works well according to [INSTALL.md]().
+Ensure the RLBench simulator is working properly according to [INSTALL.md](https://github.com/utomm/mini-diffuse-actor/blob/master/INSTALL.md).
+
+Run:
 
 ```
 python minidiffuser/evaluation/eval_simple_policy_parrallel.py
 ```
 
-for headless run
+For headless testing:
+
 ```
 xvfb-run -a python minidiffuser/evaluation/eval_simple_policy_parrallel.py
 ```
-for result reproducation, you can do. 
+
+To reproduce benchmark results:
+
 ```
 bash scripts/locals_policy_peract.sh 
 ```
-Remember to delete the results in the seed folder, otherwise runs with the seeds that already exist will be skipped.
 
+⚠️ Remember to delete results in the seed folder first — otherwise, runs with existing seeds will be skipped.
 
+## Real-World Experiments
 
-## Realworld Experiemnts
+See our real-world setup in this [repo](https://github.com/utomm/fr3_ws).
 
-Check this [repo](https://github.com/utomm/fr3_ws) for our real world setup.
+We will update with guides on:
 
-we will update how to do:
+### Data Collection
 
-### Data collection
-
-### Preprocess collected data
+### Preprocessing Collected Data
 
 ### Training
 
-### Test in real world
+### Real-World Testing
