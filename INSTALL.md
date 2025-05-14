@@ -1,5 +1,7 @@
 # Installation Instructions
 
+start with a clean env, or if you are using contained env like Vasi.ai, AutoDL, choose base image `nvidia/cuda:12.1.0-base-ubuntu20.04`
+
 1. Install general python packages
 ```bash
 conda create -n midi python==3.10

@@ -115,9 +115,9 @@ VAL_DATASET:
   real_robot: False
   
 MODEL:
-  mini_batches: 1
+  mini_batches: 100
   diffusion:
-    total_timesteps: 50
+    total_timesteps: 100
   model_class: DP
   ptv3_config:
     in_channels: 7
