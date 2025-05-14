@@ -41,12 +41,26 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
+# Peract-18 Datasets in RLbench
+
+Here we borrow the dataset generate by [3D-LUTOS](https://github.com/vlc-robot/robot-3dlotus/), with their pre-generated dataset we don't need to install RLbench for loading data and training.
+
+The RLBench-18task dataset (peract) can be downloaded [here](https://huggingface.co/datasets/rjgpinel/RLBench-18Task/tree/main)
+
+change the `TRAIN_DATASET.data_dir` in `minidiffuser/train/diffusion_ptv3.yaml` to where you store the dataset.
+
+
+**You can begin to train a mini-diffuser now.**
+
 # For headless RLBench evaluation
-x11 related lib
+
+1. Install x11 related lib
+
 ```
 sudo apt-get install xorg libxcb-randr0-dev libxrender-dev libxkbcommon-dev libxkbcommon-x11-0 libavcodec-dev libavformat-dev libswscale-dev apt-get install -y --no-install-recommends libgl1-mesa-dev xvfb dbus-x11 x11-utils libxkbcommon-x11-0
 ```
 
+2. Install PyRep and RLbench
 ```bash
 mkdir dependencies
 cd dependencies
@@ -82,51 +96,30 @@ pip install .
 cd ../..
 ```
 
-3. Install model dependencies
-
-```bash
-cd dependencies
-
-# Please ensure to set CUDA_HOME beforehand as specified in the export const of the section 1
-git clone https://github.com/cshizhe/chamferdist.git
-cd chamferdist
-python setup.py install
-cd ..
-
-git clone https://github.com/cshizhe/Pointnet2_PyTorch.git
-cd Pointnet2_PyTorch/pointnet2_ops_lib
-python setup.py install
-cd ../..
-
-# llama3: needed for 3D-LOTUS++
-git clone https://github.com/cshizhe/llama3.git
-cd llama3
-pip install -e .
-cd ../..
-```
-
 4. Running headless
 
-If you have sudo priviledge on the headless machine, you could follow [this instruction](https://github.com/rjgpinel/RLBench?tab=readme-ov-file#running-headless) to run RLBench.
+```
+export COPPELIASIM_ROOT=${HOME}/mini-diffuse-actor/dependencies/CoppeliaSim_Edu_V4_1_0_Ubuntu20_04
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$COPPELIASIM_ROOT
+export QT_QPA_PLATFORM_PLUGIN_PATH=$COPPELIASIM_ROOT
 
-Otherwise, you can use [singularity](https://apptainer.org/docs/user/1.3/index.html) or [docker](https://docs.docker.com/) to run RLBench in headless machines without sudo privilege.
-The [XVFB](https://manpages.ubuntu.com/manpages/xenial/man1/xvfb-run.1.html) should be installed in the virtual image in order to have a virtual screen.
 
-A pre-built singularity image can be downloaded [here](https://www.dropbox.com/scl/fi/wnf27yd4pkeywjk2y3wd4/nvcuda_v2.sif?rlkey=7lpni7d9b6dwjj4wehldq8037&st=5steya0b&dl=0).
-Here are some simple commands to run singularity:
-```bash
-export SINGULARITY_IMAGE_PATH=`YOUR PATH TO THE SINGULARITY IMAGE`
-export python_bin=$HOME/miniconda3/envs/gembench/bin/python
+expr_dir=/home/huser/mini-diffuse-actor/experiments/minidiff
+ckpt_step=95200
 
-# interactive mode
-singularity shell --bind $HOME:$HOME,$SCRATCH:$SCRATCH --nv $SINGULARITY_IMAGE_PATH
-
-# run script
-singularity exec --bind $HOME:$HOME,$SCRATCH:$SCRATCH --nv $SINGULARITY_IMAGE_PATH xvfb-run -a ${python_bin} ...
+for seed in 0 1 2
+do
+xvfb-run -a python minidiffuser/evaluation/eval_simple_policy_parrallel.py \
+    --expr_dir ${expr_dir} --ckpt_step ${ckpt_step} --num_workers 6 \
+    --taskvar_file assets/taskvars_peract.json \
+    --seed ${seed} --num_demos 20 \
+    --microstep_data_dir /home/huser/data/RLBench-18Task/test/microsteps # --record_video False
+done
 ```
 
-5. Adapt the codebase to your environment
+or 
 
-To adapt the codebase to your environment, you may need to modify the following:
-- replace everywhere $HOME/codes/robot-3dlotus with your path to robot-3dlotus folder
-- replace everywhere the sif_image path to your path to the singularity image nvcuda_v2.sif
+```
+bash scripts/locals_policy_peract.sh
+```
+
