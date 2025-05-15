@@ -1,5 +1,6 @@
 # Mini-Diffuse-Actor
 
+[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/train-a-multi-task-diffusion-policy-on/robot-manipulation-on-rlbench)](https://paperswithcode.com/sota/robot-manipulation-on-rlbench?p=train-a-multi-task-diffusion-policy-on) [![arXiv](https://img.shields.io/badge/arXiv-2505.09430-b31b1b.svg?style=flat)](https://arxiv.org/abs/2505.09430)
 ![image](https://github.com/user-attachments/assets/433c8532-4eb2-49f7-8424-58a9cb29de23)
 
 ## Highlights
