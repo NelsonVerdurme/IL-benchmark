@@ -61,9 +61,11 @@ bash scripts/locals_policy_peract.sh
 
 ## Real-World Experiments
 
-See our real-world setup in this [repo](https://github.com/utomm/fr3_ws).
+See our real-world setup in this [repo](https://github.com/utomm/fr3_ws). In short, we seperate the ROS and CUDA learning environment and use websocket to communicate, to aviod python version conflict.
 
-We will update with guides on:
+![image](https://github.com/user-attachments/assets/66235340-7ba0-48a4-ab98-38d78156070a)
+
+In that repo we will update with guides on:
 
 ### Data Collection
 
